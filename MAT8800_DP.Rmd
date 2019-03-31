@@ -1,0 +1,1891 @@
+---
+title: "MAT8800 - DP"
+author: "Duane Stanton"
+date: "September 30, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Processing non-election data - part 1
+### Processing square mileage (land area) of each district data
+```{r}
+# initial comparison
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/USCongressDistrictLandArea.xlsx"
+library(readxl)
+library(tidyverse)
+
+# note: from the U.S. Census site:
+# There are no tables for the single member states (Alaska, Delaware, Montana, North Dakota, South Dakota, Vermont, and Wyoming)
+# need to manually input these:
+# AK: 570641   DE: 1949   MT: 145546   ND: 69001   SD: 75811   VT: 9217   WY: 97093
+
+# district data for 2012 and 2014
+houseDistArea12_14 <- read_excel(path, sheet = "cd2013", skip = 1)
+
+# district data for 2016
+houseDistArea16 <- read_excel(path, sheet = "cd2016", skip = 1)
+
+# combine variables for comparison - need to rename vars first
+houseDistArea1 <- houseDistArea12_14 %>%
+  rename(state1 = State, 
+         district1 = `Congressional District`,
+         areaSqMi1 = `Land Area`) %>%
+  mutate(state1 = as.character(state1))
+
+houseDistArea2 <- houseDistArea16 %>%
+  rename(state2 = State, 
+         district2 = `Congressional District`,
+         areaSqMi2 = `Land Area`) %>%
+  mutate(state2 = as.character(state2))
+
+houseDistArea <- houseDistArea1 %>% bind_cols(houseDistArea2) 
+
+# map state #s to state names
+stateNumMap <- read_csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ANSI_FIPScodes_States.csv")
+
+# create lookup table to map state # to state name
+keys <- as.character(stateNumMap$FIPS) # need to remove AK, DE, MT, ND, SD, VT, and WY
+vals <- stateNumMap$Name
+
+lut <- setNames(vals, keys)
+
+houseDistArea <- houseDistArea %>%
+  mutate(diffArea1to2 = areaSqMi2 - areaSqMi1,
+         stateName1 = lut[houseDistArea$state1],
+         stateName2 = lut[houseDistArea$state2]) %>%
+  mutate(stateName  = if_else(stateName1 == stateName2, stateName1, "not a match"),
+         district   = if_else(district1 == district2, district1, 999)) %>%
+  # everything matches
+  mutate(stateName1 = NULL,
+         stateName2 = NULL,
+         state1     = NULL,
+         state2     = NULL,
+         district1  = NULL,
+         district2  = NULL)
+
+rm(path, houseDistArea12_14, houseDistArea16, houseDistArea1, houseDistArea2, stateNumMap, keys, vals, lut)
+
+# checking if congressional district areas are the same in both time periods
+houseDistArea %>% 
+  summarize(numDifferingDistrs = sum(diffArea1to2 != 0), 
+            numMatchingDistrs = sum(diffArea1to2 == 0))
+
+# not all matching, so need to selectively add the congressional area vars by dataset
+# first, need to add data for the "whole-state" congressional districts
+# AK: 570641   DE: 1949   MT: 145546   ND: 69001   SD: 75811   VT: 9217   WY: 97093
+wholeStateCDs <- tibble(areaSqMi1    = c(570641, 1949, 145546, 69001, 75811, 9217, 97093),
+                        areaSqMi2    = c(570641, 1949, 145546, 69001, 75811, 9217, 97093),
+                        diffArea1to2 = rep(0, 7),
+                        stateName    = c("Alaska", "Delaware", "Montana", "North Dakota", "South Dakota", 
+                                         "Vermont", "Wyoming"),
+                        district     = rep(0, 7))
+
+houseDistArea <- houseDistArea %>% bind_rows(wholeStateCDs)
+
+# What is currently "areaSqMi2" is the data for 2012/14/16 
+# based on spot-check research on the districts with sizable changes from areaSqMi1 to areaSqMi2
+
+houseDistArea$areaSqMi <- houseDistArea$areaSqMi2
+
+houseDistArea <- houseDistArea %>% rename(state = stateName) %>%
+  select(state, district, areaSqMi) %>%
+  mutate(district = if_else( (nchar(district) != 2), paste0("0", as.character(district)), as.character(district)) )
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseDistArea, file = "houseDistArea.csv", row.names = FALSE)
+```  
+
+## Processing election data - votes data and FEC campaign finance data
+
+### 2010 - DON'T USE FOR NOW - HAVING TROUBLE CORRECTLY CLASSIFYING DISTRICT WINNER
+```{r}
+# 2010 election
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/federalelections2010.xls"
+library(readxl)
+library(tidyverse)
+houseElection10 <- read_excel(path, sheet = "2010 US House & Senate Results", col_types = "text")
+
+houseElection10 <- houseElection10 %>% 
+  select(STATE, DISTRICT, `FEC ID#`, `INCUMBENT INDICATOR (I)`, `CANDIDATE NAME (Last, First)`, PARTY, 
+         `PRIMARY`, `RUNOFF`, `GENERAL`) %>%
+  filter(!is.na(`CANDIDATE NAME (Last, First)`) & (!grepl("S", DISTRICT)) & (DISTRICT != "H")) %>%
+  mutate(`GENERAL` = as.character(`GENERAL`))
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection10, file = "houseElection10.csv", row.names = FALSE)
+
+# vote data
+houseElection10 <- read.csv("houseElection10.csv", stringsAsFactors = FALSE, colClasses = "character")
+
+houseElection10 <- houseElection10 %>% 
+  rename(state         = STATE,
+         district      = DISTRICT,
+         fecID         = FEC.ID.,
+         incumbent     = INCUMBENT.INDICATOR..I.,
+         candidateName = CANDIDATE.NAME..Last..First.,
+         party         = PARTY,
+         primary       = PRIMARY,
+         primaryRunoff = RUNOFF,
+         general       = GENERAL) %>%
+  mutate(incumbent     = if_else(incumbent == "(I)", 1, 0),
+         primaryRunoff = as.numeric(primaryRunoff),
+         party         = str_trim(party) ) %>%
+  mutate(party         = if_else( grepl("\\*", party), sub("\\*", "", party), party),
+         incumbent     = if_else(!is.na(incumbent) & incumbent == 1, 1, 0)) %>%
+  mutate(candidateName = if_else( grepl(" #", candidateName), sub(" #", "", candidateName), as.character(candidateName)),
+         entryD        = as.numeric( (grepl("DEM", party) | grepl("DFL", party) | grepl("DNL", party))),
+         entryR        = as.numeric( (grepl("REP", party))) ) %>%
+  mutate(entryOth      = as.numeric( entryD == 0 & entryR == 0),
+         candidateName = str_trim(candidateName) ) %>%
+    # filter out non-voting 'region's
+  filter(state != "American Samoa" & state != "District of Columbia" & state != "Guam" & 
+         state != "Northern Mariana Islands" & state != "Puerto Rico" & state != "Virgin Islands") %>%
+  # some districts have both "FULL TERM" (regular election) and "UNEXPIRED TERM" (special election) data
+  # keeping just "FULL TERM" since "UNEXPIRED TERM" is just for vacant seats prior to the regular election
+  filter(!grepl("UNEXPIRED TERM", district) ) %>%
+  mutate(district = if_else(grepl("FULL TERM", district), 
+                            substr(district, start = 1, stop = 2), as.character(district)),
+         # intermediate party-check variable
+         party    = if_else( (entryD == 1 & (entryR + entryOth) == 0), "D",
+                             if_else( (entryR == 1 & (entryD + entryOth) == 0), "R",
+                                      if_else( (entryOth == 1 & (entryD + entryR) == 0), "Oth", "CHECK"))) ) %>%
+  mutate(primaryD        = if_else( (entryD == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffD     = if_else( (entryD == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopD    = if_else( (entryD == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryD == 1 & grepl("\\*", primary)), 1, 0),
+         primaryR        = if_else( (entryR == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffR     = if_else( (entryR == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopR    = if_else( (entryR == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryR == 1 & grepl("\\*", primary)), 1, 0),
+         primaryOth      = if_else( (entryOth == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffOth   = if_else( (entryOth == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopOth  = if_else( (entryOth == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryOth == 1 & grepl("\\*", primary)), 1, 0),
+         generalD        = if_else( (entryD == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopD    = if_else( (entryD == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalR        = if_else( (entryR == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopR    = if_else( (entryR == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalOth      = if_else( (entryOth == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopOth  = if_else( (entryOth == 1 & !is.na(general) & general == "Unopposed"), 1, 0) ) %>%
+  mutate(generalUnopD    = as.numeric( (primaryUnopD == 1 & is.na(general)) | generalUnopD == 1),
+         generalUnopR    = as.numeric( (primaryUnopR == 1 & is.na(general)) | generalUnopR == 1) ) %>%
+  group_by(state, district, fecID, candidateName) %>%
+  summarize(incumbent        = sum(incumbent),
+            entryD           = sum(entryD),
+            entryR           = sum(entryR),
+            entryOth         = sum(entryOth),
+            primaryD         = sum(primaryD),
+            primRunoffD      = sum(primRunoffD),
+            primaryUnopD     = sum(primaryUnopD),
+            primaryR         = sum(primaryR),
+            primRunoffR      = sum(primRunoffR),
+            primaryUnopR     = sum(primaryUnopR),
+            primaryOth       = sum(primaryOth),
+            primRunoffOth    = sum(primRunoffOth),
+            primaryUnopOth   = sum(primaryUnopOth),
+            generalD         = sum(generalD),
+            generalUnopD     = sum(generalUnopD),
+            generalR         = sum(generalR),
+            generalUnopR     = sum(generalUnopR),
+            generalOth       = sum(generalOth),
+            generalUnopOth   = sum(generalUnopOth) ) %>%
+  # assigning candidates to party based first on general election vote counts,
+  # then on primary vote counts if needed
+  mutate(party = if_else( (generalD > 0 | generalUnopD == 1 | (primaryD + primaryUnopD > primaryOth)), "D",
+                          if_else( (generalR > 0 | generalUnopR == 1 | (primaryR + primaryUnopR > primaryOth)), "R", 
+                                   "CHECK")) ) %>%
+  # second-tier party classification; based on entryD / entryR / entryOth values
+  mutate(party = if_else(party == "D", "D",
+                         if_else(party == "R", "R",
+                                 if_else( (entryD > (entryR + entryOth)), "D",
+                                          if_else( (entryR > (entryD + entryOth)), "R", "Oth")))) ) %>%
+  # revise general election vote counts to reflect each candidate's assigned party
+  # also revise generalWin to binary
+  mutate(generalD   = if_else( (party == "D" & candidateName != "Scattered"), generalD + generalOth, generalD),
+         generalR   = if_else( (party == "R" & candidateName != "Scattered"), generalR + generalOth, generalR) ) %>%
+  mutate(generalOth = if_else( (party == "Oth" | candidateName == "Scattered"), generalOth, 0) )
+
+# identify which party won the general election for each district
+general10 <- houseElection10 %>% filter( (generalD + generalUnopD > 0) | (generalR + generalUnopR > 0) | 
+                                           (generalOth + generalUnopOth > 0) & (candidateName != "Scattered") ) %>%
+  group_by(state, district) %>%
+  summarize(generalD         = sum(generalD),
+            generalUnopD     = sum(generalUnopD),
+            generalR         = sum(generalR),
+            generalUnopR     = sum(generalUnopR),
+            generalOth       = sum(generalOth),
+            generalUnopOth   = sum(generalUnopOth)) %>%
+  mutate(generalWinParty     = if_else( ((generalD + generalUnopD) > generalR & 
+                                           (generalD + generalUnopD) > generalOth), "D",
+                                        if_else( ((generalR + generalUnopR) > generalD & 
+                                                    (generalR + generalUnopR) > generalOth), "R", "Oth")) )
+
+# greatest number of votes among generalD, generalR, generalOth for each district
+dat <- general10 %>% select(generalD, generalR, generalOth)
+dat <- dat[,-1]
+
+topVoteCount <- apply(dat, 1, function(x) max(x))
+
+# bring the winning party and top # votes vectors into the broader voting data set
+numEntryDat     <- houseElection10 %>% group_by(state, district) %>% summarize(numTot = n())
+#generalWinParty <- rep(general10$generalWinParty, numEntryDat$numTot)
+topVoteCount    <- rep(topVoteCount, numEntryDat$numTot)
+
+#houseElection10$generalWinParty <- generalWinParty
+#houseElection10$topVoteCount    <- topVoteCount 
+
+generalWinner <- as.numeric(houseElection10$generalD == topVoteCount | houseElection10$generalUnopD == 1 |
+                            houseElection10$generalR == topVoteCount | houseElection10$generalUnopR == 1 |
+                            houseElection10$generalOth == topVoteCount | houseElection10$generalUnopOth == 1)
+
+
+houseElection10$generalWinner <- generalWinner 
+
+# missing 51, 206, 282, 351, 352, 366 [districts10 entries]
+# CA-31, MI-08, NY-23, RI-01, RI-02, TN-08
+```
+
+### 2012  
+```{r}
+# initial setup
+library(tidyverse)
+library(readxl)
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/federalelections2012.xls"
+houseElection12 <- read_excel(path, sheet = "2012 US House & Senate Resuts")
+
+# NOTE: (I) IS INCUMBENT INDICATOR
+
+houseElection12 <- houseElection12 %>% 
+  select(STATE, D, `FEC ID#`, `(I)`, `CANDIDATE NAME`, PARTY, `PRIMARY VOTES`, `RUNOFF VOTES`, `GENERAL VOTES`,
+         `GE RUNOFF ELECTION VOTES (LA)`, `COMBINED GE PARTY TOTALS (CT, NY, SC)`, `GE WINNER INDICATOR`) %>%
+  filter(!is.na(`CANDIDATE NAME`) & (D != "S") & (D != "H"))
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection12, file = "houseElection12.csv", row.names = FALSE)
+
+# vote data
+houseElection12 <- read.csv("houseElection12.csv", stringsAsFactors = FALSE)
+
+houseElection12 <- houseElection12 %>% 
+  rename(state         = STATE,
+         district      = D,
+         fecID         = FEC.ID.,
+         incumbent     = X.I.,
+         candidateName = CANDIDATE.NAME,
+         party         = PARTY,
+         primary       = PRIMARY.VOTES,
+         primaryRunoff = RUNOFF.VOTES,
+         general       = GENERAL.VOTES,
+         generalRunoff = GE.RUNOFF.ELECTION.VOTES..LA.,
+         generalWinner = GE.WINNER.INDICATOR ) %>%
+  # filter out non-voting 'region's
+  filter(state != "American Samoa" & state != "District of Columbia" & state != "Guam" & 
+         state != "Northern Mariana Islands" & state != "Puerto Rico" & state != "Virgin Islands") %>%
+  # some districts have both "FULL TERM" (regular election) and "UNEXPIRED TERM" (special election) data
+  # keeping just "FULL TERM" since "UNEXPIRED TERM" is just for vacant seats prior to the regular election
+  filter(!grepl("UNEXPIRED TERM", district) & !grepl("UNEXPIRED TERM", candidateName) ) %>%
+  mutate(party         = str_trim(party),
+         incumbent     = as.numeric(incumbent == "(I)" & !is.na(incumbent))) %>%
+  mutate(party         = if_else( grepl("\\*", party), sub("\\*", "", party), party),
+         # remove incumbent marker for write-in (W(...)) and misc. (e.g. N(X)) / third-party WF/IDP/CRV / Combined Parties 
+         incumbent     = if_else( (grepl("W\\(", party) | grepl("N\\(", party) |
+                                  party == "WF" | party == "IDP" | party == "CRV" |
+                                  grepl("Combined Parties", party)), 0, incumbent) ) %>%
+  mutate(candidateName = if_else( grepl(" #", candidateName), sub(" #", "", candidateName),
+                                  if_else( grepl(" \\*", candidateName), sub("  \\*", "", candidateName),
+                                           candidateName)),
+         entryD        = as.numeric( (party == "D" | grepl("D\\/", party) | grepl("\\/D", party) |
+                                     grepl("DFL", party) | grepl("DNL", party) | grepl("W\\(D\\)", party)) &
+                                     party != "DRP" & party != "IDP" & party != "IND" & party != "WDP"),
+         #  | party == "CRV" --> I think this is not a Republican party subsidiary
+         entryR        = as.numeric( party == "R" | party == "GOP" | grepl("\\/R", party) |
+                                      grepl("R\\/", party) | grepl("W\\(R\\)", party)) ) %>%
+  mutate(entryOth      = as.numeric( entryD == 0 & entryR == 0),
+         candidateName = str_trim(candidateName),
+         generalWin    = as.numeric(grepl("W", generalWinner))) %>%
+   # creating party-specific primary and general election vars
+      # Note: William Enyart (IL-12) was the D party candidate for the general after the D primary winner withdrew
+      # Note: Rodney Davis (IL-13) was the R party candidate for the general after the R primary winner withdrew
+      # Note: David Joyce (OH-14) was the R party candidate for the general after the R primary winner withdrew
+  mutate(primaryD        = if_else( (entryD == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffD     = if_else( (entryD == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopD    = if_else( (entryD == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryD == 1 & grepl("\\*", primary)), 1, 0),
+         primaryR        = if_else( (entryR == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffR     = if_else( (entryR == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopR    = if_else( (entryR == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryR == 1 & grepl("\\*", primary)), 1, 0),
+         primaryOth      = if_else( (entryOth == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffOth   = if_else( (entryOth == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopOth  = if_else( (entryOth == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryOth == 1 & grepl("\\*", primary)), 1, 0),
+         generalD        = if_else( (entryD == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopD    = if_else( (entryD == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalR        = if_else( (entryR == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopR    = if_else( (entryR == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalOth      = if_else( (entryOth == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopOth  = if_else( (entryOth == 1 & !is.na(general) & general == "Unopposed"), 1, 0) ) %>%
+  mutate(district = if_else(grepl("FULL TERM", district), 
+                            substr(district, start = 1, stop = 2), as.character(district)),
+         # intermediate party-check variable
+         party    = if_else( (entryD == 1 & (entryR + entryOth) == 0), "D",
+                             if_else( (entryR == 1 & (entryD + entryOth) == 0), "R",
+                                      if_else( (entryOth == 1 & (entryD + entryR) == 0), "Oth", "CHECK"))) ) %>%
+    # aggregate vote counts by category within FEC ID, then classify candidate party based on the results
+  group_by(state, district, fecID, candidateName) %>%
+  summarize(incumbent        = sum(incumbent),
+            entryD           = sum(entryD),
+            entryR           = sum(entryR),
+            entryOth         = sum(entryOth),
+            primaryD         = sum(primaryD),
+            primRunoffD      = sum(primRunoffD),
+            primaryUnopD     = sum(primaryUnopD),
+            primaryR         = sum(primaryR),
+            primRunoffR      = sum(primRunoffR),
+            primaryUnopR     = sum(primaryUnopR),
+            primaryOth       = sum(primaryOth),
+            primRunoffOth    = sum(primRunoffOth),
+            primaryUnopOth   = sum(primaryUnopOth),
+            generalD         = sum(generalD),
+            generalUnopD     = sum(generalUnopD),
+            generalR         = sum(generalR),
+            generalUnopR     = sum(generalUnopR),
+            generalOth       = sum(generalOth),
+            generalUnopOth   = sum(generalUnopOth),
+            generalWin       = sum(generalWin) ) %>%
+  # assigning candidates to party based first on general election vote counts,
+  # then on primary vote counts if needed
+  mutate(party = if_else( (generalD > 0 | generalUnopD == 1 | (primaryD + primaryUnopD > primaryR + primaryOth)), "D",
+                    if_else( (generalR > 0 | generalUnopR == 1 | (primaryR + primaryUnopR > primaryD + primaryOth)), "R", 
+                                   "CHECK")) ) %>%
+  # second-tier party classification; based on entryD / entryR / entryOth values
+  mutate(party = if_else(party == "D", "D",
+                         if_else(party == "R", "R",
+                                 if_else( (entryD > (entryR + entryOth)), "D",
+                                          if_else( (entryR > (entryD + entryOth)), "R", "Oth")))) ) %>%
+  # revise general election vote counts to reflect each candidate's assigned party
+  # also revise generalWin to binary
+  mutate(generalD        = if_else(party == "D", generalD + generalOth, generalD),
+         generalR        = if_else(party == "R", generalR + generalOth, generalR) ) %>%
+  mutate(generalOth      = if_else(party == "Oth", generalOth, 0),
+         generalWin      = as.numeric(generalWin > 0) ) %>%
+  mutate(incumbentD      = as.numeric(incumbent == 1 & party == "D"),
+         incumbentR      = as.numeric(incumbent == 1 & party == "R"),
+         incumbentOth    = as.numeric(incumbent == 1 & party == "Oth"),
+         generalWinD     = as.numeric(generalWin == 1 & party == "D"),
+         generalWinR     = as.numeric(generalWin == 1 & party == "R"),
+         generalWinOth   = as.numeric(generalWin == 1 & party == "Oth"),
+         incumbentWinD   = as.numeric(incumbent == 1 & generalWin == 1 & party == "D"),
+         incumbentWinR   = as.numeric(incumbent == 1 & generalWin == 1 & party == "R"),
+         incumbentWinOth = as.numeric(incumbent == 1 & generalWin == 1 & party == "Oth") )
+  # add variable to track whether the incumbent won, and their party
+
+# 2012 campaign contribution and spending data - from FEC
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/candidate_summary_2012_FEC.csv"
+fecDat12 <- read.csv(path)
+
+# note: Cand_Incumbent_Challenger_Open_Seat variable is not accurate - can't use here
+fecDat12 <- fecDat12 %>%
+  select(fecID           = Cand_Id,
+         cmpgnRecpt      = Total_Receipt,
+         cmpgnDisburs    = Total_Disbursement) %>%
+  select(fecID, cmpgnRecpt, cmpgnDisburs)
+
+# join incumbent, openSeat, cmpgnRecpt, and cmpgnDisburs to voting data
+# match by fecID
+houseElection12 <- houseElection12 %>% left_join(fecDat12, by = "fecID")
+
+#x <- houseElection12 %>% filter((is.na(cmpgnRecpt) | is.na(cmpgnDisburs)) & 
+#                                  candidateName != "Scattered" & candidateName != "All Others" & candidateName != "None")
+# some candidates still missing campaign data
+#setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/")
+#write.csv(x, file = "x12.csv", row.names = FALSE)
+
+# the next step comes from manually looking up their entries on OpenSecrets.org,
+# which stores campaign $ raised & spent data - provided by the Center for Responsive Politics
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/"
+moreFEC12 <- read.csv("addl_FEC_data12.csv")
+
+moreFEC12 <- moreFEC12 %>% 
+  mutate(district      = if_else(nchar(district) == 2, as.character(district), paste0("0", district)) ) %>%
+  rename(cmpgnRecpt1   = cmpgnRecpt,
+         cmpgnDisburs1 = cmpgnDisburs)
+
+# add the additional FEC data
+houseElection12 <- houseElection12 %>% 
+  left_join(moreFEC12, by = c("state", "district", "fecID", "candidateName", "party")) %>%
+  mutate(cmpgnRecpt   = as.integer(cmpgnRecpt),
+         cmpgnDisburs = as.integer(cmpgnDisburs)) %>%
+  mutate(cmpgnRecpt   = if_else(!is.na(cmpgnRecpt), cmpgnRecpt,
+                              if_else(is.na(cmpgnRecpt) & !is.na(cmpgnRecpt1), cmpgnRecpt1, 0L)),
+         cmpgnDisburs = if_else(!is.na(cmpgnDisburs), cmpgnDisburs,
+                              if_else(is.na(cmpgnDisburs) & !is.na(cmpgnDisburs1), cmpgnDisburs1, 0L)) )
+
+# NOTE: the FEC-provided data combines House and Presidential campaign funds for candidates
+# who ran for both offices but didn't run in the general election for the presidency
+# need to revise to House-only spending info based on OpenSecrets.org / Center for Responsive Politics data
+
+# Bachman (MN-06 / fecID H6MN06074): Recpt 14,995,937, Disburs 11,946,232
+# all other top fund amounts appear OK
+
+houseElection12 <- houseElection12 %>%
+  mutate(cmpgnRecpt   = if_else(fecID == "H6MN06074" & party == "R", 14995937, as.numeric(cmpgnRecpt)),
+         cmpgnDisburs = if_else(fecID == "H6MN06074" & party == "R", 11946232, as.numeric(cmpgnDisburs)) )
+
+# create variables setting out cmpgnRecpt and cmpgnDisburs by party
+houseElection12 <- houseElection12 %>%
+  mutate(cmpgnRecptD     = if_else(party == "D", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptR     = if_else(party == "R", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptOth   = if_else(party == "Oth", as.integer(cmpgnRecpt), 0L),
+         cmpgnDisbursD   = if_else(party == "D", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursR   = if_else(party == "R", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursOth = if_else(party == "Oth", as.integer(cmpgnDisburs), 0L) )
+
+# district-level summary
+houseElection12Dist <- houseElection12 %>%
+  group_by(state, district) %>%
+  summarize(incumbentD         = sum(incumbentD),
+            incumbentR         = sum(incumbentR),
+            incumbentOth       = sum(incumbentOth),
+            cmpgnTotRecptD     = sum(cmpgnRecptD),
+            cmpgnMaxRecptD     = max(cmpgnRecptD),
+            cmpgnTotRecptR     = sum(cmpgnRecptR),
+            cmpgnTotMaxRecptR  = max(cmpgnRecptR),
+            cmpgnTotRecptOth   = sum(cmpgnRecptOth),
+            cmpgnMaxRecptOth   = max(cmpgnRecptOth),
+            cmpgnTotDisbursD   = sum(cmpgnDisbursD),
+            cmpgnMaxDisbursD   = max(cmpgnDisbursD),
+            cmpgnTotDisbursR   = sum(cmpgnDisbursR),
+            cmpgnMaxDisbursR   = max(cmpgnDisbursR),
+            cmpgnTotDisbursOth = sum(cmpgnDisbursOth),
+            cmpgnMaxDisbursOth = max(cmpgnDisbursOth),
+            primaryNumCandD   = sum(as.integer(primaryD > 0), as.integer(primaryUnopD == 1)),
+            primaryMaxD       = max(primaryD),
+            primRunoffTotD    = sum(primRunoffD),
+            primRunoffMaxD    = max(primRunoffD),
+            primaryTotD       = sum(primaryD),
+            primaryUnopD      = sum(primaryUnopD),
+            primaryNumCandR   = sum(as.integer(primaryR > 0), as.integer(primaryUnopR == 1)),
+            primaryMaxR       = max(primaryR),
+            primRunoffTotR    = sum(primRunoffR),
+            primRunoffMaxR    = max(primRunoffR),
+            primaryTotR       = sum(primaryR),
+            primaryUnopR      = sum(primaryUnopR),
+            primaryNumCandOth = sum(as.integer(primaryOth > 0), as.integer(primaryUnopOth == 1)),
+            primaryMaxOth     = max(primaryOth),
+            primRunoffTotOth  = sum(primRunoffOth),
+            primRunoffMaxOth  = max(primRunoffOth),
+            primaryTotOth     = sum(primaryOth),
+            primaryUnopOth    = sum(primaryUnopOth),
+            generalNumCandD   = sum(as.integer(generalD > 0), as.integer(generalUnopD == 1)),
+            generalTotD       = sum(generalD),
+            generalMaxD       = max(generalD),
+            generalUnopD      = sum(generalUnopD),
+            generalNumCandR   = sum(as.integer(generalR > 0), as.integer(generalUnopR == 1)),
+            generalTotR       = sum(generalR),
+            generalMaxR       = sum(generalR),
+            generalUnopR      = sum(generalUnopR),
+            generalNumCandOth = sum(as.integer(generalOth > 0), as.integer(generalUnopOth == 1)),
+            generalTotOth     = sum(generalOth),
+            generalMaxOth     = max(generalOth),
+            generalUnopOth    = sum(generalUnopOth),
+            generalWinD       = sum(generalWinD),
+            generalWinR       = sum(generalWinR),
+            generalWinOth     = sum(generalWinOth),
+            incumbentWinD     = sum(incumbentWinD),
+            incumbentWinR     = sum(incumbentWinR),
+            incumbentWinOth   = sum(incumbentWinOth) ) %>%
+  # computing totals and the district winning party
+  mutate(cmpgnRecptTotal      = cmpgnTotRecptD + cmpgnTotRecptR + cmpgnTotRecptOth,
+         cmpgnDisbursTotal    = cmpgnTotDisbursD + cmpgnTotDisbursR + cmpgnTotDisbursOth,
+         primaryNumCandTotal  = primaryNumCandD + primaryNumCandR + primaryNumCandOth,
+         primaryTotal         = primaryTotD + primaryTotR + primaryTotOth,
+         generalNumCandTotal  = generalNumCandD + generalNumCandR + generalNumCandOth,
+         generalTotal         = generalTotD + generalTotR + generalTotOth )
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection12Dist, file = "houseElection12Dist.csv", row.names = FALSE)
+
+houseElection12Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection12Dist.csv")
+houseDistArea <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseDistArea.csv")
+
+houseElection12Dist <- houseElection12Dist %>%
+  left_join(houseDistArea, by = c("state", "district"))
+
+write.csv(houseElection12Dist, file = "houseElection12Dist.csv", row.names = FALSE)
+```
+
+### 2014  
+```{r}
+# initial setup
+library(tidyverse)
+library(readxl)
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/federalelections2014.xls"
+houseElection14 <- read_excel(path, sheet = "2014 US House Results by State")
+
+# NOTE: (I) IS INCUMBENT INDICATOR
+
+houseElection14 <- houseElection14 %>% 
+  select(STATE, D, `FEC ID#`, `(I)`, `CANDIDATE NAME`, PARTY, `PRIMARY VOTES`, `RUNOFF VOTES`, `GENERAL VOTES`,
+         `GE RUNOFF ELECTION VOTES (LA)`, `COMBINED GE PARTY TOTALS (CT, NY, SC)`, `GE WINNER INDICATOR`) %>%
+  filter(!is.na(`CANDIDATE NAME`) & (D != "S") & (D != "H"))
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection14, file = "houseElection14.csv", row.names = FALSE)
+
+# vote data
+houseElection14 <- read.csv("houseElection14.csv", stringsAsFactors = FALSE)
+
+houseElection14 <- houseElection14 %>% 
+  rename(state         = STATE,
+         district      = D,
+         fecID         = FEC.ID.,
+         incumbent     = X.I.,
+         candidateName = CANDIDATE.NAME,
+         party         = PARTY,
+         primary       = PRIMARY.VOTES,
+         primaryRunoff = RUNOFF.VOTES,
+         general       = GENERAL.VOTES,
+         generalRunoff = GE.RUNOFF.ELECTION.VOTES..LA.,
+         generalWinner = GE.WINNER.INDICATOR ) %>%
+  # filter out non-voting 'region's
+  filter(state != "American Samoa" & state != "District of Columbia" & state != "Guam" & 
+         state != "Northern Mariana Islands" & state != "Puerto Rico" & state != "Virgin Islands") %>%
+  # some districts have both "FULL TERM" (regular election) and "UNEXPIRED TERM" (special election) data
+  # keeping just "FULL TERM" since "UNEXPIRED TERM" is just for vacant seats prior to the regular election
+  filter(!grepl("UNEXPIRED TERM", district) & !grepl("UNEXPIRED TERM", candidateName) ) %>%
+  # incorrect fecID for two CT-04 candidates, who are also incorrectly flagged as joint winners for the general election
+  mutate(fecID         = if_else( (fecID == "H8CT04172" & candidateName != "Himes, Jim"), "n/a", fecID),
+         generalWinner = if_else( (state == "Connecticut" & district == "04" & candidateName != "Himes, Jim"), 
+                                  " ", generalWinner) ) %>%
+  # incorrect (missing) generalWinner entry for HI-01
+  mutate(generalWinner = if_else( (state == "Hawaii" & district == "01" & candidateName == "Takai, Mark"), 
+                                  "W", generalWinner) ) %>%
+  mutate(party         = str_trim(party),
+         incumbent     = as.numeric(incumbent == "(I)" & !is.na(incumbent))) %>%
+  mutate(party         = if_else( grepl("\\*", party), sub("\\*", "", party), party),
+         # remove incumbent marker for write-in (W(...)) and misc. (e.g. N(X)) / third-party WF/IDP/CRV / Combined Parties 
+         incumbent     = if_else( (grepl("W\\(", party) | grepl("N\\(", party) |
+                                  party == "WF" | party == "IDP" | party == "CRV" | party == "W" |
+                                  grepl("Combined Parties", party)), 0, incumbent) ) %>%
+  mutate(candidateName = if_else( grepl(" #", candidateName), sub(" #", "", candidateName),
+                                  if_else( grepl(" \\*", candidateName), sub("  \\*", "", candidateName),
+                                           candidateName)),
+         entryD        = as.numeric( (party == "D" | grepl("D\\/", party) | grepl("\\/D", party) |
+                                     grepl("DFL", party) | grepl("DNL", party) | grepl("W\\(D\\)", party)) &
+                                     party != "DRP" & party != "IDP" & party != "IND" & party != "WDP"),
+         #  | party == "CRV" --> I think this is not a Republican party subsidiary
+         entryR        = as.numeric( party == "R" | party == "GOP" | grepl("\\/R", party) |
+                                      grepl("R\\/", party) | grepl("W\\(R\\)", party)) ) %>%
+  mutate(entryOth      = as.numeric( entryD == 0 & entryR == 0),
+         candidateName = str_trim(candidateName),
+         generalWin    = as.numeric(grepl("W", generalWinner))) %>%
+   # creating party-specific primary and general election vars
+      # Note: Mark Lester (AL-06) was the D party candidate for the general after the D primary winner withdrew
+      # Note: Christina Barr (MI-14) was the R party candidate for the general after the R primary winner withdrew
+  mutate(primaryD        = if_else( (entryD == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffD     = if_else( (entryD == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopD    = if_else( (entryD == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryD == 1 & grepl("\\*", primary)), 1, 0),
+         primaryR        = if_else( (entryR == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffR     = if_else( (entryR == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopR    = if_else( (entryR == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryR == 1 & grepl("\\*", primary)), 1, 0),
+         primaryOth      = if_else( (entryOth == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffOth   = if_else( (entryOth == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopOth  = if_else( (entryOth == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryOth == 1 & grepl("\\*", primary)), 1, 0),
+         generalD        = if_else( (entryD == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopD    = if_else( (entryD == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalR        = if_else( (entryR == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopR    = if_else( (entryR == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalOth      = if_else( (entryOth == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopOth  = if_else( (entryOth == 1 & !is.na(general) & general == "Unopposed"), 1, 0) ) %>%
+  mutate(district = if_else(grepl("FULL TERM", district), 
+                            substr(district, start = 1, stop = 2), as.character(district)),
+         # intermediate party-check variable
+         party    = if_else( (entryD == 1 & (entryR + entryOth) == 0), "D",
+                             if_else( (entryR == 1 & (entryD + entryOth) == 0), "R",
+                                      if_else( (entryOth == 1 & (entryD + entryR) == 0), "Oth", "CHECK"))) ) %>%
+  # aggregate vote counts by category within FEC ID, then classify candidate party based on the results
+  group_by(state, district, fecID, candidateName) %>%
+  summarize(incumbent        = sum(incumbent),
+            entryD           = sum(entryD),
+            entryR           = sum(entryR),
+            entryOth         = sum(entryOth),
+            primaryD         = sum(primaryD),
+            primRunoffD      = sum(primRunoffD),
+            primaryUnopD     = sum(primaryUnopD),
+            primaryR         = sum(primaryR),
+            primRunoffR      = sum(primRunoffR),
+            primaryUnopR     = sum(primaryUnopR),
+            primaryOth       = sum(primaryOth),
+            primRunoffOth    = sum(primRunoffOth),
+            primaryUnopOth   = sum(primaryUnopOth),
+            generalD         = sum(generalD),
+            generalUnopD     = sum(generalUnopD),
+            generalR         = sum(generalR),
+            generalUnopR     = sum(generalUnopR),
+            generalOth       = sum(generalOth),
+            generalUnopOth   = sum(generalUnopOth),
+            generalWin       = sum(generalWin) ) %>%
+  # assigning candidates to party based first on general election vote counts,
+  # then on primary vote counts if needed
+  mutate(party = if_else( (generalD > 0 | generalUnopD == 1 | (primaryD + primaryUnopD > primaryR + primaryOth)), "D",
+                    if_else( (generalR > 0 | generalUnopR == 1 | (primaryR + primaryUnopR > primaryD + primaryOth)), "R", 
+                                   "CHECK")) ) %>%
+  # second-tier party classification; based on entryD / entryR / entryOth values
+  mutate(party = if_else(party == "D", "D",
+                         if_else(party == "R", "R",
+                                 if_else( (entryD > (entryR + entryOth)), "D",
+                                          if_else( (entryR > (entryD + entryOth)), "R", "Oth")))) ) %>%
+  # revise general election vote counts to reflect each candidate's assigned party
+  # also revise generalWin to binary
+  mutate(generalD        = if_else(party == "D", generalD + generalOth, generalD),
+         generalR        = if_else(party == "R", generalR + generalOth, generalR) ) %>%
+  mutate(generalOth      = if_else(party == "Oth", generalOth, 0),
+         generalWin      = as.numeric(generalWin > 0) ) %>%
+  mutate(incumbentD      = as.numeric(incumbent == 1 & party == "D"),
+         incumbentR      = as.numeric(incumbent == 1 & party == "R"),
+         incumbentOth    = as.numeric(incumbent == 1 & party == "Oth"),
+         generalWinD     = as.numeric(generalWin == 1 & party == "D"),
+         generalWinR     = as.numeric(generalWin == 1 & party == "R"),
+         generalWinOth   = as.numeric(generalWin == 1 & party == "Oth"),
+         incumbentWinD   = as.numeric(incumbent == 1 & generalWin == 1 & party == "D"),
+         incumbentWinR   = as.numeric(incumbent == 1 & generalWin == 1 & party == "R"),
+         incumbentWinOth = as.numeric(incumbent == 1 & generalWin == 1 & party == "Oth"))
+
+# 2014 campaign contribution and spending data - from FEC
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/candidate_summary_2014_FEC.csv"
+fecDat14 <- read.csv(path)
+
+# note: Cand_Incumbent_Challenger_Open_Seat variable is not accurate - can't use here
+fecDat14 <- fecDat14 %>%
+  select(fecID           = Cand_Id,
+         cmpgnRecpt      = Total_Receipt,
+         cmpgnDisburs    = Total_Disbursement) %>%
+  select(fecID, cmpgnRecpt, cmpgnDisburs)
+
+# join incumbent, openSeat, cmpgnRecpt, and cmpgnDisburs to voting data
+# match by fecID
+houseElection14 <- houseElection14 %>% left_join(fecDat14, by = "fecID")
+
+#x <- houseElection14 %>% filter((is.na(cmpgnRecpt) | is.na(cmpgnDisburs)) & 
+#                                  candidateName != "Scattered" & candidateName != "All Others" & candidateName != "None")
+# some candidates still missing campaign data
+#setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/")
+#write.csv(x, file = "x14.csv", row.names = FALSE)
+
+# the next step comes from manually looking up their entries on OpenSecrets.org,
+# which stores campaign $ raised & spent data - provided by the Center for Responsive Politics
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/"
+moreFEC14 <- read.csv("addl_FEC_data14.csv")
+
+moreFEC14 <- moreFEC14 %>% 
+  mutate(district      = if_else(nchar(district) == 2, as.character(district), paste0("0", district)) ) %>%
+  rename(cmpgnRecpt1   = cmpgnRecpt,
+         cmpgnDisburs1 = cmpgnDisburs)
+
+# add the additional FEC data
+houseElection14 <- houseElection14 %>% 
+  left_join(moreFEC14, by = c("state", "district", "fecID", "candidateName", "party")) %>%
+  mutate(cmpgnRecpt   = as.integer(cmpgnRecpt),
+         cmpgnDisburs = as.integer(cmpgnDisburs)) %>%
+  mutate(cmpgnRecpt   = if_else(!is.na(cmpgnRecpt), cmpgnRecpt,
+                              if_else(is.na(cmpgnRecpt) & !is.na(cmpgnRecpt1), cmpgnRecpt1, 0L)),
+         cmpgnDisburs = if_else(!is.na(cmpgnDisburs), cmpgnDisburs,
+                              if_else(is.na(cmpgnDisburs) & !is.na(cmpgnDisburs1), cmpgnDisburs1, 0L)) )
+
+# NOTE: the FEC-provided data combines House and Presidential campaign funds for candidates
+# who ran for both offices but didn't run in the general election for the presidency
+# need to revise to House-only spending info based on OpenSecrets.org / Center for Responsive Politics data
+
+# all top fund amounts appear OK - no presidential campaign in the 2014 election!
+
+# create variables setting out cmpgnRecpt and cmpgnDisburs by party
+houseElection14 <- houseElection14 %>%
+  mutate(cmpgnRecptD     = if_else(party == "D", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptR     = if_else(party == "R", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptOth   = if_else(party == "Oth", as.integer(cmpgnRecpt), 0L),
+         cmpgnDisbursD   = if_else(party == "D", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursR   = if_else(party == "R", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursOth = if_else(party == "Oth", as.integer(cmpgnDisburs), 0L) )
+
+# district-level summary
+houseElection14Dist <- houseElection14 %>%
+  group_by(state, district) %>%
+  summarize(incumbentD         = sum(incumbentD),
+            incumbentR         = sum(incumbentR),
+            incumbentOth       = sum(incumbentOth),
+            cmpgnTotRecptD     = sum(cmpgnRecptD),
+            cmpgnMaxRecptD     = max(cmpgnRecptD),
+            cmpgnTotRecptR     = sum(cmpgnRecptR),
+            cmpgnTotMaxRecptR  = max(cmpgnRecptR),
+            cmpgnTotRecptOth   = sum(cmpgnRecptOth),
+            cmpgnMaxRecptOth   = max(cmpgnRecptOth),
+            cmpgnTotDisbursD   = sum(cmpgnDisbursD),
+            cmpgnMaxDisbursD   = max(cmpgnDisbursD),
+            cmpgnTotDisbursR   = sum(cmpgnDisbursR),
+            cmpgnMaxDisbursR   = max(cmpgnDisbursR),
+            cmpgnTotDisbursOth = sum(cmpgnDisbursOth),
+            cmpgnMaxDisbursOth = max(cmpgnDisbursOth),
+            primaryNumCandD   = sum(as.integer(primaryD > 0), as.integer(primaryUnopD == 1)),
+            primaryMaxD       = max(primaryD),
+            primRunoffTotD    = sum(primRunoffD),
+            primRunoffMaxD    = max(primRunoffD),
+            primaryTotD       = sum(primaryD),
+            primaryUnopD      = sum(primaryUnopD),
+            primaryNumCandR   = sum(as.integer(primaryR > 0), as.integer(primaryUnopR == 1)),
+            primaryMaxR       = max(primaryR),
+            primRunoffTotR    = sum(primRunoffR),
+            primRunoffMaxR    = max(primRunoffR),
+            primaryTotR       = sum(primaryR),
+            primaryUnopR      = sum(primaryUnopR),
+            primaryNumCandOth = sum(as.integer(primaryOth > 0), as.integer(primaryUnopOth == 1)),
+            primaryMaxOth     = max(primaryOth),
+            primRunoffTotOth  = sum(primRunoffOth),
+            primRunoffMaxOth  = max(primRunoffOth),
+            primaryTotOth     = sum(primaryOth),
+            primaryUnopOth    = sum(primaryUnopOth),
+            generalNumCandD   = sum(as.integer(generalD > 0), as.integer(generalUnopD == 1)),
+            generalTotD       = sum(generalD),
+            generalMaxD       = max(generalD),
+            generalUnopD      = sum(generalUnopD),
+            generalNumCandR   = sum(as.integer(generalR > 0), as.integer(generalUnopR == 1)),
+            generalTotR       = sum(generalR),
+            generalMaxR       = sum(generalR),
+            generalUnopR      = sum(generalUnopR),
+            generalNumCandOth = sum(as.integer(generalOth > 0), as.integer(generalUnopOth == 1)),
+            generalTotOth     = sum(generalOth),
+            generalMaxOth     = max(generalOth),
+            generalUnopOth    = sum(generalUnopOth),
+            generalWinD       = sum(generalWinD),
+            generalWinR       = sum(generalWinR),
+            generalWinOth     = sum(generalWinOth),
+            incumbentWinD     = sum(incumbentWinD),
+            incumbentWinR     = sum(incumbentWinR),
+            incumbentWinOth   = sum(incumbentWinOth) ) %>%
+  # computing totals and the district winning party
+  mutate(cmpgnRecptTotal      = cmpgnTotRecptD + cmpgnTotRecptR + cmpgnTotRecptOth,
+         cmpgnDisbursTotal    = cmpgnTotDisbursD + cmpgnTotDisbursR + cmpgnTotDisbursOth,
+         primaryNumCandTotal  = primaryNumCandD + primaryNumCandR + primaryNumCandOth,
+         primaryTotal         = primaryTotD + primaryTotR + primaryTotOth,
+         generalNumCandTotal  = generalNumCandD + generalNumCandR + generalNumCandOth,
+         generalTotal         = generalTotD + generalTotR + generalTotOth )
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection14Dist, file = "houseElection14Dist.csv", row.names = FALSE)
+
+houseElection14Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection14Dist.csv")
+houseDistArea <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseDistArea.csv")
+
+houseElection14Dist <- houseElection14Dist %>%
+  left_join(houseDistArea, by = c("state", "district"))
+
+write.csv(houseElection14Dist, file = "houseElection14Dist.csv", row.names = FALSE)
+```
+
+### 2016  
+```{r}
+# initial setup
+library(tidyverse)
+library(readxl)
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/federalelections2016.xlsx"
+houseElection16 <- read_xlsx(path, sheet = "2016 US House Results by State")
+
+# NOTE: (I) IS INCUMBENT INDICATOR
+
+houseElection16 <- houseElection16 %>% 
+  select(STATE, D, `FEC ID#`, `(I)`, `CANDIDATE NAME`, PARTY, `PRIMARY VOTES`, `RUNOFF VOTES`, `GENERAL VOTES`,
+         `GE RUNOFF ELECTION VOTES (LA)`, `COMBINED GE PARTY TOTALS (CT, NY, SC)`, `GE WINNER INDICATOR`) %>%
+  filter(!is.na(`CANDIDATE NAME`) & (D != "S") & (D != "H"))
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection16, file = "houseElection16.csv", row.names = FALSE)
+
+# vote data
+houseElection16 <- read.csv("houseElection16.csv", stringsAsFactors = FALSE)
+
+houseElection16 <- houseElection16 %>% 
+  # CODING ERROR IN ORIGINAL DOCUMENT FOR UT-03 CANDIDATES
+  mutate(D             = if_else( (STATE == "Utah" & D == "02" & 
+                                     (CANDIDATE.NAME == "Chaffetz, Jason" | CANDIDATE.NAME == "Teng, Chia-Chi")),
+                                  "03", D),
+  # CODING ERROR IN ORIGINAL DOCUMENT FOR NE-01 INCUMBENCY
+         X.I.          = if_else( (STATE == "Nebraska" & D == "01" & CANDIDATE.NAME == "Fortenberry, Jeff"),
+                                  "(I)",
+                            # base R rather than dplyr ifelse to mix character and logical coding
+                            ifelse( (STATE == "Nebraska" & D == "01" & CANDIDATE.NAME == "Wik, Daniel M."), NA,
+                                     X.I.)),
+  # SAME TYPE OF CODING ERROR IN ORIGINAL DOCUMENT FOR NH-01 INCUMBENCY
+         X.I.          = if_else( (STATE == "New Hampshire" & D == "01" & CANDIDATE.NAME == "Guinta, Frank"),
+                                  "(I)",
+                            # base R rather than dplyr ifelse to mix character and logical coding
+                            ifelse( (STATE == "New Hampshire" & D == "01" & CANDIDATE.NAME == "Shea-Porter, Carol"), NA,
+                                     X.I.))
+  
+  
+  
+  ) %>%
+  rename(state         = STATE,
+         district      = D,
+         fecID         = FEC.ID.,
+         incumbent     = X.I.,
+         candidateName = CANDIDATE.NAME,
+         party         = PARTY,
+         primary       = PRIMARY.VOTES,
+         primaryRunoff = RUNOFF.VOTES,
+         general       = GENERAL.VOTES,
+         generalRunoff = GE.RUNOFF.ELECTION.VOTES..LA.,
+         generalWinner = GE.WINNER.INDICATOR ) %>%
+  # filter out non-voting 'region's
+  filter(state != "American Samoa" & state != "District of Columbia" & state != "Guam" & 
+         state != "Northern Mariana Islands" & state != "Puerto Rico" & state != "Virgin Islands") %>%
+  # some districts have both "FULL TERM" (regular election) and "UNEXPIRED TERM" (special election) data
+  # keeping just "FULL TERM" since "UNEXPIRED TERM" is just for vacant seats prior to the regular election
+  filter(!grepl("UNEXPIRED TERM", district) & !grepl("UNEXPIRED TERM", candidateName) ) %>%
+  mutate(party         = str_trim(party),
+         incumbent     = as.numeric(incumbent == "(I)" & !is.na(incumbent))) %>%
+  mutate(party         = if_else( grepl("\\*", party), sub("\\*", "", party), party),
+         # remove incumbent marker for write-in (W(...)) and misc. (e.g. N(X)) / third-party WF/IDP/CRV / Combined Parties 
+         incumbent     = if_else( (grepl("W\\(", party) | grepl("N\\(", party) |
+                                  party == "WF" | party == "IDP" | party == "CRV" | party == "WEP" |
+                                  grepl("Combined Parties", party)), 0, incumbent) ) %>%
+  mutate(candidateName = if_else( grepl(" #", candidateName), sub(" #", "", candidateName),
+                                  if_else( grepl(" \\*", candidateName), sub("  \\*", "", candidateName),
+                                           candidateName)),
+         entryD        = as.numeric( (party == "D" | grepl("D\\/", party) | grepl("\\/D", party) |
+                                     grepl("DFL", party) | grepl("DNL", party) | grepl("W\\(D\\)", party)) &
+                                     party != "DRP" & party != "IDP" & party != "IND" & party != "WDP"),
+         #  | party == "CRV" --> I think this is not a Republican party subsidiary
+         # added a kludge to account for P. Welch (D) being listed as "D/R" in VT
+         entryR        = as.numeric( (party == "R" | party == "GOP" | grepl("\\/R", party) |
+                                      grepl("R\\/", party) | grepl("W\\(R\\)", party)) & 
+                                       !(state == "Vermont" & candidateName == "Welch, Peter")) ) %>%
+  mutate(entryOth      = as.numeric( entryD == 0 & entryR == 0),
+         candidateName = str_trim(candidateName),
+         generalWin    = as.numeric(grepl("W", generalWinner))) %>%
+   # creating party-specific primary and general election vars
+      # OLDNote: Mark Lester (AL-06) was the D party candidate for the general after the D primary winner withdrew
+      # OLDNote: Christina Barr (MI-14) was the R party candidate for the general after the R primary winner withdrew
+  mutate(primaryD        = if_else( (entryD == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffD     = if_else( (entryD == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopD    = if_else( (entryD == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryD == 1 & grepl("\\*", primary)), 1, 0),
+         primaryR        = if_else( (entryR == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffR     = if_else( (entryR == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopR    = if_else( (entryR == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryR == 1 & grepl("\\*", primary)), 1, 0),
+         primaryOth      = if_else( (entryOth == 1 & !is.na(as.numeric(primary))), as.numeric(primary), 0),
+         primRunoffOth   = if_else( (entryOth == 1 & !is.na(primaryRunoff)), as.numeric(primaryRunoff), 0),
+         primaryUnopOth  = if_else( (entryOth == 1 & !is.na(primary) & primary == "Unopposed") |
+                                      (entryOth == 1 & grepl("\\*", primary)), 1, 0),
+         generalD        = if_else( (entryD == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopD    = if_else( (entryD == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalR        = if_else( (entryR == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopR    = if_else( (entryR == 1 & !is.na(general) & general == "Unopposed"), 1, 0),
+         generalOth      = if_else( (entryOth == 1 & !is.na(as.numeric(general))), as.numeric(general), 0),
+         generalUnopOth  = if_else( (entryOth == 1 & !is.na(general) & general == "Unopposed"), 1, 0) ) %>%
+  mutate(district = if_else(grepl("FULL TERM", district), 
+                            substr(district, start = 1, stop = 2), as.character(district)),
+         # intermediate party-check variable
+         party    = if_else( (entryD == 1 & (entryR + entryOth) == 0), "D",
+                             if_else( (entryR == 1 & (entryD + entryOth) == 0), "R",
+                                      if_else( (entryOth == 1 & (entryD + entryR) == 0), "Oth", "CHECK"))) ) %>%
+  # aggregate vote counts by category within FEC ID, then classify candidate party based on the results
+  group_by(state, district, fecID, candidateName) %>%
+  summarize(incumbent        = sum(incumbent),
+            entryD           = sum(entryD),
+            entryR           = sum(entryR),
+            entryOth         = sum(entryOth),
+            primaryD         = sum(primaryD),
+            primRunoffD      = sum(primRunoffD),
+            primaryUnopD     = sum(primaryUnopD),
+            primaryR         = sum(primaryR),
+            primRunoffR      = sum(primRunoffR),
+            primaryUnopR     = sum(primaryUnopR),
+            primaryOth       = sum(primaryOth),
+            primRunoffOth    = sum(primRunoffOth),
+            primaryUnopOth   = sum(primaryUnopOth),
+            generalD         = sum(generalD),
+            generalUnopD     = sum(generalUnopD),
+            generalR         = sum(generalR),
+            generalUnopR     = sum(generalUnopR),
+            generalOth       = sum(generalOth),
+            generalUnopOth   = sum(generalUnopOth),
+            generalWin       = sum(generalWin) ) %>%
+  # assigning candidates to party based first on general election vote counts,
+  # then on primary vote counts if needed
+  mutate(party = if_else( (generalD > 0 | generalUnopD == 1 | (primaryD + primaryUnopD > primaryR + primaryOth)), "D",
+                    if_else( (generalR > 0 | generalUnopR == 1 | (primaryR + primaryUnopR > primaryD + primaryOth)), "R", 
+                                   "CHECK")) ) %>%
+  # second-tier party classification; based on entryD / entryR / entryOth values
+  mutate(party = if_else(party == "D", "D",
+                         if_else(party == "R", "R",
+                                 if_else( (entryD > (entryR + entryOth)), "D",
+                                          if_else( (entryR > (entryD + entryOth)), "R", "Oth")))) ) %>%
+  # revise general election vote counts to reflect each candidate's assigned party
+  # also revise generalWin to binary
+  mutate(generalD        = if_else(party == "D", generalD + generalOth, generalD),
+         generalR        = if_else(party == "R", generalR + generalOth, generalR) ) %>%
+  mutate(generalOth      = if_else(party == "Oth", generalOth, 0),
+         generalWin      = as.numeric(generalWin > 0) ) %>%
+  mutate(incumbentD      = as.numeric(incumbent == 1 & party == "D"),
+         incumbentR      = as.numeric(incumbent == 1 & party == "R"),
+         incumbentOth    = as.numeric(incumbent == 1 & party == "Oth"),
+         generalWinD     = as.numeric(generalWin == 1 & party == "D"),
+         generalWinR     = as.numeric(generalWin == 1 & party == "R"),
+         generalWinOth   = as.numeric(generalWin == 1 & party == "Oth"),
+         incumbentWinD   = as.numeric(incumbent == 1 & generalWin == 1 & party == "D"),
+         incumbentWinR   = as.numeric(incumbent == 1 & generalWin == 1 & party == "R"),
+         incumbentWinOth = as.numeric(incumbent == 1 & generalWin == 1 & party == "Oth"))
+
+# 2016 campaign contribution and spending data - from FEC
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/candidate_summary_2016_FEC.csv"
+fecDat16 <- read.csv(path)
+
+# note: Cand_Incumbent_Challenger_Open_Seat variable is not accurate - can't use here
+fecDat16 <- fecDat16 %>%
+  select(fecID           = Cand_Id,
+         cmpgnRecpt      = Total_Receipt,
+         cmpgnDisburs    = Total_Disbursement) %>%
+  select(fecID, cmpgnRecpt, cmpgnDisburs)
+
+# join incumbent, openSeat, cmpgnRecpt, and cmpgnDisburs to voting data
+# match by fecID
+houseElection16 <- houseElection16 %>% left_join(fecDat16, by = "fecID")
+
+#x <- houseElection16 %>% filter((is.na(cmpgnRecpt) | is.na(cmpgnDisburs)) & 
+#                                  candidateName != "Scattered" & candidateName != "All Others" & candidateName != "None")
+# some candidates still missing campaign data
+#setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/")
+#write.csv(x, file = "x16.csv", row.names = FALSE)
+
+# the next step comes from manually looking up their entries on OpenSecrets.org,
+# which stores campaign $ raised & spent data - provided by the Center for Responsive Politics
+
+path <- "C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/"
+moreFEC16 <- read.csv("addl_FEC_data16.csv")
+
+moreFEC16 <- moreFEC16 %>% 
+  mutate(district      = if_else(nchar(district) == 2, as.character(district), paste0("0", district)) ) %>%
+  rename(cmpgnRecpt1   = cmpgnRecpt,
+         cmpgnDisburs1 = cmpgnDisburs)
+
+# add the additional FEC data
+houseElection16 <- houseElection16 %>% 
+  left_join(moreFEC16, by = c("state", "district", "fecID", "candidateName", "party")) %>%
+  mutate(cmpgnRecpt   = as.integer(cmpgnRecpt),
+         cmpgnDisburs = as.integer(cmpgnDisburs)) %>%
+  mutate(cmpgnRecpt   = if_else(!is.na(cmpgnRecpt), cmpgnRecpt,
+                              if_else(is.na(cmpgnRecpt) & !is.na(cmpgnRecpt1), cmpgnRecpt1, 0L)),
+         cmpgnDisburs = if_else(!is.na(cmpgnDisburs), cmpgnDisburs,
+                              if_else(is.na(cmpgnDisburs) & !is.na(cmpgnDisburs1), cmpgnDisburs1, 0L)) )
+
+# NOTE: the FEC-provided data combines House and Presidential campaign funds for candidates
+# who ran for both offices but didn't run in the general election for the presidency
+# need to revise to House-only spending info based on OpenSecrets.org / Center for Responsive Politics data
+
+# all top fund amounts appear OK
+
+# create variables setting out cmpgnRecpt and cmpgnDisburs by party
+houseElection16 <- houseElection16 %>%
+  mutate(cmpgnRecptD     = if_else(party == "D", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptR     = if_else(party == "R", as.integer(cmpgnRecpt), 0L),
+         cmpgnRecptOth   = if_else(party == "Oth", as.integer(cmpgnRecpt), 0L),
+         cmpgnDisbursD   = if_else(party == "D", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursR   = if_else(party == "R", as.integer(cmpgnDisburs), 0L),
+         cmpgnDisbursOth = if_else(party == "Oth", as.integer(cmpgnDisburs), 0L) )
+
+# district-level summary
+houseElection16Dist <- houseElection16 %>%
+  group_by(state, district) %>%
+  summarize(incumbentD         = sum(incumbentD),
+            incumbentR         = sum(incumbentR),
+            incumbentOth       = sum(incumbentOth),
+            cmpgnTotRecptD     = sum(cmpgnRecptD),
+            cmpgnMaxRecptD     = max(cmpgnRecptD),
+            cmpgnTotRecptR     = sum(cmpgnRecptR),
+            cmpgnTotMaxRecptR  = max(cmpgnRecptR),
+            cmpgnTotRecptOth   = sum(cmpgnRecptOth),
+            cmpgnMaxRecptOth   = max(cmpgnRecptOth),
+            cmpgnTotDisbursD   = sum(cmpgnDisbursD),
+            cmpgnMaxDisbursD   = max(cmpgnDisbursD),
+            cmpgnTotDisbursR   = sum(cmpgnDisbursR),
+            cmpgnMaxDisbursR   = max(cmpgnDisbursR),
+            cmpgnTotDisbursOth = sum(cmpgnDisbursOth),
+            cmpgnMaxDisbursOth = max(cmpgnDisbursOth),
+            primaryNumCandD   = sum(as.integer(primaryD > 0), as.integer(primaryUnopD == 1)),
+            primaryMaxD       = max(primaryD),
+            primRunoffTotD    = sum(primRunoffD),
+            primRunoffMaxD    = max(primRunoffD),
+            primaryTotD       = sum(primaryD),
+            primaryUnopD      = sum(primaryUnopD),
+            primaryNumCandR   = sum(as.integer(primaryR > 0), as.integer(primaryUnopR == 1)),
+            primaryMaxR       = max(primaryR),
+            primRunoffTotR    = sum(primRunoffR),
+            primRunoffMaxR    = max(primRunoffR),
+            primaryTotR       = sum(primaryR),
+            primaryUnopR      = sum(primaryUnopR),
+            primaryNumCandOth = sum(as.integer(primaryOth > 0), as.integer(primaryUnopOth == 1)),
+            primaryMaxOth     = max(primaryOth),
+            primRunoffTotOth  = sum(primRunoffOth),
+            primRunoffMaxOth  = max(primRunoffOth),
+            primaryTotOth     = sum(primaryOth),
+            primaryUnopOth    = sum(primaryUnopOth),
+            generalNumCandD   = sum(as.integer(generalD > 0), as.integer(generalUnopD == 1)),
+            generalTotD       = sum(generalD),
+            generalMaxD       = max(generalD),
+            generalUnopD      = sum(generalUnopD),
+            generalNumCandR   = sum(as.integer(generalR > 0), as.integer(generalUnopR == 1)),
+            generalTotR       = sum(generalR),
+            generalMaxR       = sum(generalR),
+            generalUnopR      = sum(generalUnopR),
+            generalNumCandOth = sum(as.integer(generalOth > 0), as.integer(generalUnopOth == 1)),
+            generalTotOth     = sum(generalOth),
+            generalMaxOth     = max(generalOth),
+            generalUnopOth    = sum(generalUnopOth),
+            generalWinD       = sum(generalWinD),
+            generalWinR       = sum(generalWinR),
+            generalWinOth     = sum(generalWinOth),
+            incumbentWinD     = sum(incumbentWinD),
+            incumbentWinR     = sum(incumbentWinR),
+            incumbentWinOth   = sum(incumbentWinOth) ) %>%
+  # computing totals and the district winning party
+  mutate(cmpgnRecptTotal      = cmpgnTotRecptD + cmpgnTotRecptR + cmpgnTotRecptOth,
+         cmpgnDisbursTotal    = cmpgnTotDisbursD + cmpgnTotDisbursR + cmpgnTotDisbursOth,
+         primaryNumCandTotal  = primaryNumCandD + primaryNumCandR + primaryNumCandOth,
+         primaryTotal         = primaryTotD + primaryTotR + primaryTotOth,
+         generalNumCandTotal  = generalNumCandD + generalNumCandR + generalNumCandOth,
+         generalTotal         = generalTotD + generalTotR + generalTotOth )
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection16Dist, file = "houseElection16Dist.csv", row.names = FALSE)
+
+houseElection16Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection16Dist.csv")
+houseDistArea <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseDistArea.csv")
+
+houseElection16Dist <- houseElection16Dist %>%
+  left_join(houseDistArea, by = c("state", "district"))
+
+write.csv(houseElection16Dist, file = "houseElection16Dist.csv", row.names = FALSE)
+```
+
+## Processing non-election data - part 2
+### Point estimates for demographic data from U.S. Census Bureau
+
+### 2012  
+```{r}
+library(tidyverse)
+
+houseElection12Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection12Dist.csv")
+
+# load Census Bureau 2012 district-level demo's data
+census2012Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_12_1YR_S0201_with_ann.csv")
+
+census2012Dist <- 
+  census2012Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(census2012Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "113th Congress"
+         district = str_replace(GEO.display.label, pattern = "113th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC entry
+  filter(state != "District of Columbia") %>%
+  # in order to include standard error estimates, need to first coerce to character and then convert to numeric
+  # also, U.S. Census PDF (see slide 39) indicates using MoE = 0 when entries have 5 *
+  # (https://www.census.gov/content/dam/Census/programs-surveys/acs/guidance/training-presentations/20180418_MOE.pdf)
+  # next, must convert to SE from MOE
+  # U.S. Census Bureau uses 90% level MOE (z = 1.645), so dividing by 1.645 yields SE
+  mutate(SE_VC124 = if_else(is.na(as.numeric(as.character(MOE_VC124))), 0, 
+                             as.numeric(as.character(MOE_VC124)) / 1.645),
+         SE_VC125 = if_else(is.na(as.numeric(as.character(MOE_VC125))), 0, 
+                             as.numeric(as.character(MOE_VC125)) / 1.645),
+         SE_VC182 = if_else(is.na(as.numeric(as.character(MOE_VC182))), 0, 
+                             as.numeric(as.character(MOE_VC182)) / 1.645),
+         SE_VC190 = if_else(is.na(as.numeric(as.character(MOE_VC190))), 0, 
+                             as.numeric(as.character(MOE_VC190)) / 1.645),
+         SE_VC11  = if_else(is.na(as.numeric(as.character(MOE_VC11))), 0, 
+                             as.numeric(as.character(MOE_VC11)) / 1.645),
+         SE_VC12  = if_else(is.na(as.numeric(as.character(MOE_VC12))), 0, 
+                             as.numeric(as.character(MOE_VC12)) / 1.645),
+         SE_VC13  = if_else(is.na(as.numeric(as.character(MOE_VC13))), 0, 
+                             as.numeric(as.character(MOE_VC13)) / 1.645),
+         SE_VC25  = if_else(is.na(as.numeric(as.character(MOE_VC25))), 0, 
+                             as.numeric(as.character(MOE_VC25)) / 1.645),
+         SE_VC40  = if_else(is.na(as.numeric(as.character(MOE_VC40))), 0, 
+                             as.numeric(as.character(MOE_VC40)) / 1.645),
+         SE_VC44  = if_else(is.na(as.numeric(as.character(MOE_VC44))), 0, 
+                             as.numeric(as.character(MOE_VC44)) / 1.645),
+         SE_VC48  = if_else(is.na(as.numeric(as.character(MOE_VC48))), 0, 
+                             as.numeric(as.character(MOE_VC48)) / 1.645),
+         SE_VC126 = if_else(is.na(as.numeric(as.character(MOE_VC126))), 0, 
+                             as.numeric(as.character(MOE_VC126)) / 1.645),
+         SE_VC127 = if_else(is.na(as.numeric(as.character(MOE_VC127))), 0, 
+                             as.numeric(as.character(MOE_VC127)) / 1.645),
+         SE_VC128 = if_else(is.na(as.numeric(as.character(MOE_VC128))), 0, 
+                             as.numeric(as.character(MOE_VC128)) / 1.645),
+         SE_VC133 = if_else(is.na(as.numeric(as.character(MOE_VC133))), 0, 
+                             as.numeric(as.character(MOE_VC133)) / 1.645),
+         SE_VC217 = if_else(is.na(as.numeric(as.character(MOE_VC217))), 0, 
+                             as.numeric(as.character(MOE_VC217)) / 1.645),
+         SE_VC226 = if_else(is.na(as.numeric(as.character(MOE_VC226))), 0, 
+                             as.numeric(as.character(MOE_VC226)) / 1.645),
+         SE_VC229 = if_else(is.na(as.numeric(as.character(MOE_VC229))), 0, 
+                             as.numeric(as.character(MOE_VC229)) / 1.645),
+         SE_VC300 = if_else(is.na(as.numeric(as.character(MOE_VC300))), 0, 
+                             as.numeric(as.character(MOE_VC300)) / 1.645),
+         SE_VC324 = if_else(is.na(as.numeric(as.character(MOE_VC324))), 0, 
+                             as.numeric(as.character(MOE_VC324)) / 1.645),
+         SE_VC342 = if_else(is.na(as.numeric(as.character(MOE_VC342))), 0, 
+                             as.numeric(as.character(MOE_VC342)) / 1.645),
+         SE_VC361 = if_else(is.na(as.numeric(as.character(MOE_VC361))), 0, 
+                             as.numeric(as.character(MOE_VC361)) / 1.645) ) %>%
+  # note: while not realistic, I will be treating variables as independent,
+  # so 0 correlation between added / subtracted variables
+  mutate(pctEduHSorLessAge25plus    = EST_VC124 + EST_VC125,
+         pctEduHSorLessAge25plus_SE = sqrt(SE_VC124^2 + SE_VC125^2),
+         # for the next two variables, I am treating total U.S. population estimate as a constant
+         # only to allow for simpler approximation of SE
+         # this is very likely not a reasonable assumption in an analytical context
+         pctUSBorn                  = EST_VC182 * 100 / EST_VC11,
+         pctUSBorn_SE               = SE_VC182 * 100 / EST_VC11,
+         pctForgnBornUSCtzn         = EST_VC190 * 100 / EST_VC11,
+         pctForgnBornUSCtzn_SE      = SE_VC190 * 100 / EST_VC11,
+         #female_maleMednEarnRatio = EST_VC335 / EST_VC334 # among full-time, year-round employees
+         ) %>%
+  # reduce to only the select demographics desired, renaming as appropriate
+  select(state, 
+         district,
+         totalPop                    = EST_VC11,
+         totalPop_SE                 = SE_VC11,
+         pctMale                     = EST_VC12,
+         pctMale_SE                  = SE_VC12,
+         pctFemale                   = EST_VC13,
+         pctFemale_SE                = SE_VC13,
+         medianAgeYr                 = EST_VC25,
+         medianAgeYr_SE              = SE_VC25,
+         age18_34Pop                 = EST_VC40,
+         age18_34Pop_SE              = SE_VC40,
+         age35_64Pop                 = EST_VC44,
+         age35_64Pop_SE              = SE_VC44,
+         age65plusPop                = EST_VC48,
+         age65plusPop_SE             = SE_VC48,
+         pctEduHSorLessAge25plus,
+         pctEduHSorLessAge25plus_SE,
+         pctEduSomColgAge25plus      = EST_VC126,
+         pctEduSomColgAge25plus_SE   = SE_VC126,
+         pctEduBachAge25plus         = EST_VC127,
+         pctEduBachAge25plus_SE      = SE_VC127,
+         pctEduGradProAge25plus      = EST_VC128,
+         pctEduGradProAge25plus_SE   = SE_VC128,
+         pctEduBachPlusAge25plus     = EST_VC133,
+         pctEduBachPlusAge25plus_SE  = SE_VC133,
+         pctUSBorn,
+         pctUSBorn_SE,
+         pctForgnBornUSCtzn,
+         pctForgnBornUSCtzn_SE,
+         pctAge5PlusNonEnglshHome    = EST_VC217,
+         pctAge5PlusNonEnglshHome_SE = SE_VC217,
+         pctInLaborForceUnemp        = EST_VC226,
+         pctInLaborForceUnemp_SE     = SE_VC226,
+         pctNotInLaborForce          = EST_VC229,
+         pctNotInLaborForce_SE       = SE_VC229,
+         medianHHIncome              = EST_VC300,
+         medianHHIncome_SE           = SE_VC300,
+         perCapitaIncome             = EST_VC324,
+         perCapitaIncome_SE          = SE_VC324,
+         #female_maleMednEarnRatio,
+         pctNoHealthInsCivNonInst    = EST_VC342,
+         pctNoHealthInsCivNonInst_SE = SE_VC342,
+         pctPovertyAge18_64          = EST_VC361,
+         pctPovertyAge18_64_SE       = SE_VC361)
+
+# B02001 file has race by Congressional district
+race2012Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_12_1YR_B02001.csv")
+
+# same general process as with other census data file
+race2012Dist <- 
+  race2012Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(race2012Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "113th Congress"
+         district = str_replace(GEO.display.label, pattern = "113th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC entry
+  filter(state != "District of Columbia", state != "Puerto Rico") %>%
+  # same SE computation process as for the other census data file
+  mutate(SE_VD02 = if_else(is.na(as.numeric(as.character(HD02_VD02))), 0, 
+                             as.numeric(as.character(HD02_VD02)) / 1.645),
+         SE_VD03 = if_else(is.na(as.numeric(as.character(HD02_VD03))), 0, 
+                             as.numeric(as.character(HD02_VD03)) / 1.645),
+         SE_VD04 = if_else(is.na(as.numeric(as.character(HD02_VD04))), 0, 
+                             as.numeric(as.character(HD02_VD04)) / 1.645),
+         SE_VD05 = if_else(is.na(as.numeric(as.character(HD02_VD05))), 0, 
+                             as.numeric(as.character(HD02_VD05)) / 1.645),
+         SE_VD06 = if_else(is.na(as.numeric(as.character(HD02_VD06))), 0, 
+                             as.numeric(as.character(HD02_VD06)) / 1.645),
+         SE_VD07 = if_else(is.na(as.numeric(as.character(HD02_VD07))), 0, 
+                             as.numeric(as.character(HD02_VD07)) / 1.645),
+         SE_VD08 = if_else(is.na(as.numeric(as.character(HD02_VD08))), 0, 
+                             as.numeric(as.character(HD02_VD08)) / 1.645) ) %>%
+  mutate(pctWhiteAlone     = HD01_VD02 * 100 / HD01_VD01,
+         pctWhiteAlone_SE  = SE_VD02 * 100 / HD01_VD01,
+         pctAfrAmAlone     = HD01_VD03 * 100 / HD01_VD01,
+         pctAfrAmAlone_SE  = SE_VD03 * 100 / HD01_VD01,
+         pctOtherAlone     = (HD01_VD04 + HD01_VD05 + HD01_VD06 + HD01_VD07) * 100 / HD01_VD01,
+         pctOtherAlone_SE  = sqrt(SE_VD04^2 + SE_VD05^2 + SE_VD06^2 + SE_VD07^2) * 100 / HD01_VD01,
+         pctMultiRacial    = HD01_VD08 * 100 / HD01_VD01,
+         pctMultiRacial_SE = SE_VD08 * 100 / HD01_VD01 ) %>%
+  select(state, 
+         district,
+         pctWhiteAlone,
+         pctWhiteAlone_SE,
+         pctAfrAmAlone,
+         pctAfrAmAlone_SE,
+         pctOtherAlone,
+         pctOtherAlone_SE,
+         pctMultiRacial,
+         pctMultiRacial_SE )
+
+# add year variable for use when 2012, 2014, 2016 are merged
+houseElection12DistFnl <- 
+  houseElection12Dist %>%
+  left_join(census2012Dist, by = c("state", "district")) %>%
+  left_join(race2012Dist, by = c("state", "district")) %>%
+  mutate(state             = factor(state),
+         year              = 2012,
+         popDensityPerSqMi = totalPop / areaSqMi)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection12DistFnl, file = "houseElection12DistFnl.csv", row.names = FALSE)
+```
+
+### 2014  
+```{r}
+houseElection14Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection14Dist.csv")
+
+# load Census Bureau 2014 district-level demo's data
+census2014Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_14_1YR_S0201_with_ann.csv")
+
+census2014Dist <- 
+  census2014Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(census2014Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "114th Congress"
+         district = str_replace(GEO.display.label, pattern = "114th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC entry
+  filter(state != "District of Columbia") %>%
+  # in order to include standard error estimates, need to first coerce to character and then convert to numeric
+  # also, U.S. Census PDF (see slide 39) indicates using MoE = 0 when entries have 5 *
+  # (https://www.census.gov/content/dam/Census/programs-surveys/acs/guidance/training-presentations/20180418_MOE.pdf)
+  # next, must convert to SE from MOE
+  # U.S. Census Bureau uses 90% level MOE (z = 1.645), so dividing by 1.645 yields SE
+  mutate(SE_VC135 = if_else(is.na(as.numeric(as.character(MOE_VC135))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC135)) / 1.645),
+         SE_VC136 = if_else(is.na(as.numeric(as.character(MOE_VC136))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC136)) / 1.645),
+         SE_VC197 = if_else(is.na(as.numeric(as.character(MOE_VC197))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC197)) / 1.645),
+         SE_VC201 = if_else(is.na(as.numeric(as.character(MOE_VC201))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC201)) / 1.645),
+         SE_VC11  = if_else(is.na(as.numeric(as.character(MOE_VC11))), 0, 
+                             as.numeric(as.character(MOE_VC11)) / 1.645),
+         SE_VC12  = if_else(is.na(as.numeric(as.character(MOE_VC12))), 0, 
+                             as.numeric(as.character(MOE_VC12)) / 1.645),
+         SE_VC13  = if_else(is.na(as.numeric(as.character(MOE_VC13))), 0, 
+                             as.numeric(as.character(MOE_VC13)) / 1.645),
+         SE_VC27  = if_else(is.na(as.numeric(as.character(MOE_VC27))), 0,   # this is different from 2012 
+                             as.numeric(as.character(MOE_VC27)) / 1.645),
+         SE_VC46  = if_else(is.na(as.numeric(as.character(MOE_VC46))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC46)) / 1.645),
+         SE_VC51  = if_else(is.na(as.numeric(as.character(MOE_VC51))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC51)) / 1.645),
+         SE_VC56  = if_else(is.na(as.numeric(as.character(MOE_VC56))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC56)) / 1.645),
+         SE_VC137 = if_else(is.na(as.numeric(as.character(MOE_VC137))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC137)) / 1.645),
+         SE_VC138 = if_else(is.na(as.numeric(as.character(MOE_VC138))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC138)) / 1.645),
+         SE_VC139 = if_else(is.na(as.numeric(as.character(MOE_VC139))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC139)) / 1.645),
+         SE_VC145 = if_else(is.na(as.numeric(as.character(MOE_VC145))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC145)) / 1.645),
+         
+         SE_VC234 = if_else(is.na(as.numeric(as.character(MOE_VC234))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC234)) / 1.645),
+         SE_VC243 = if_else(is.na(as.numeric(as.character(MOE_VC243))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC243)) / 1.645),
+         SE_VC246 = if_else(is.na(as.numeric(as.character(MOE_VC246))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC246)) / 1.645),
+         SE_VC319 = if_else(is.na(as.numeric(as.character(MOE_VC319))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC319)) / 1.645),
+         SE_VC344 = if_else(is.na(as.numeric(as.character(MOE_VC344))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC344)) / 1.645),
+         SE_VC362 = if_else(is.na(as.numeric(as.character(MOE_VC362))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC362)) / 1.645),
+         SE_VC382 = if_else(is.na(as.numeric(as.character(MOE_VC382))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC382)) / 1.645) ) %>%
+  # note: while not realistic, I will be treating variables as independent,
+  # so 0 correlation between added / subtracted variables
+  mutate(pctEduHSorLessAge25plus    = EST_VC135 + EST_VC136,  # this is different from 2012
+         pctEduHSorLessAge25plus_SE = sqrt(SE_VC135^2 + SE_VC136^2),
+         # for the next two variables, I am treating total U.S. population estimate as a constant
+         # only to allow for simpler approximation of SE
+         # this is very likely not a reasonable assumption in an analytical context
+         pctUSBorn                  = EST_VC197 * 100 / EST_VC11,  # this is different from 2012
+         pctUSBorn_SE               = SE_VC197 * 100 / EST_VC11,   # this is different from 2012
+         pctForgnBornUSCtzn         = EST_VC201 * 100 / EST_VC11,  # this is different from 2012
+         pctForgnBornUSCtzn_SE      = SE_VC201 * 100 / EST_VC11,   # this is different from 2012
+         ) %>%
+  # reduce to only the select demographics desired, renaming as appropriate
+  select(state, 
+         district,
+         totalPop                    = EST_VC11,
+         totalPop_SE                 = SE_VC11,
+         pctMale                     = EST_VC12,
+         pctMale_SE                  = SE_VC12,
+         pctFemale                   = EST_VC13,
+         pctFemale_SE                = SE_VC13,
+         medianAgeYr                 = EST_VC27,  # this is different from 2012
+         medianAgeYr_SE              = SE_VC27,   # this is different from 2012
+         
+         age18_34Pop                 = EST_VC46,  # this is different from 2012
+         age18_34Pop_SE              = SE_VC46,   # this is different from 2012
+         age35_64Pop                 = EST_VC51,  # this is different from 2012
+         age35_64Pop_SE              = SE_VC51,   # this is different from 2012
+         age65plusPop                = EST_VC56,  # this is different from 2012
+         age65plusPop_SE             = SE_VC56,   # this is different from 2012
+         pctEduHSorLessAge25plus,
+         pctEduHSorLessAge25plus_SE,
+         pctEduSomColgAge25plus      = EST_VC137, # this is different from 2012
+         pctEduSomColgAge25plus_SE   = SE_VC137,  # this is different from 2012
+         pctEduBachAge25plus         = EST_VC138, # this is different from 2012
+         pctEduBachAge25plus_SE      = SE_VC138,  # this is different from 2012
+         pctEduGradProAge25plus      = EST_VC139, # this is different from 2012
+         pctEduGradProAge25plus_SE   = SE_VC139,  # this is different from 2012
+         pctEduBachPlusAge25plus     = EST_VC145, # this is different from 2012
+         pctEduBachPlusAge25plus_SE  = SE_VC145,  # this is different from 2012
+         pctUSBorn,
+         pctUSBorn_SE,
+         pctForgnBornUSCtzn,
+         pctForgnBornUSCtzn_SE,
+         pctAge5PlusNonEnglshHome    = EST_VC234, # this is different from 2012
+         pctAge5PlusNonEnglshHome_SE = SE_VC234,  # this is different from 2012
+         pctInLaborForceUnemp        = EST_VC243, # this is different from 2012
+         pctInLaborForceUnemp_SE     = SE_VC243,  # this is different from 2012
+         pctNotInLaborForce          = EST_VC246, # this is different from 2012
+         pctNotInLaborForce_SE       = SE_VC246,  # this is different from 2012
+         medianHHIncome              = EST_VC319, # this is different from 2012
+         medianHHIncome_SE           = SE_VC319,  # this is different from 2012
+         perCapitaIncome             = EST_VC344, # this is different from 2012
+         perCapitaIncome_SE          = SE_VC344,  # this is different from 2012
+         pctNoHealthInsCivNonInst    = EST_VC362, # this is different from 2012
+         pctNoHealthInsCivNonInst_SE = SE_VC362,  # this is different from 2012
+         pctPovertyAge18_64          = EST_VC382, # this is different from 2012
+         pctPovertyAge18_64_SE       = SE_VC382)  # this is different from 2012
+
+# B02001 file has race by Congressional district
+race2014Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_14_1YR_B02001.csv")
+
+# same general process as with other census data file
+race2014Dist <- 
+  race2014Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(race2014Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "114th Congress"
+         district = str_replace(GEO.display.label, pattern = "114th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC and Puerto Rico entries
+  filter(state != "District of Columbia" & state != "Puerto Rico") %>%
+  mutate(SE_VD02 = if_else(is.na(as.numeric(as.character(HD02_VD02))), 0, 
+                             as.numeric(as.character(HD02_VD02)) / 1.645),
+         SE_VD03 = if_else(is.na(as.numeric(as.character(HD02_VD03))), 0, 
+                             as.numeric(as.character(HD02_VD03)) / 1.645),
+         SE_VD04 = if_else(is.na(as.numeric(as.character(HD02_VD04))), 0, 
+                             as.numeric(as.character(HD02_VD04)) / 1.645),
+         SE_VD05 = if_else(is.na(as.numeric(as.character(HD02_VD05))), 0, 
+                             as.numeric(as.character(HD02_VD05)) / 1.645),
+         SE_VD06 = if_else(is.na(as.numeric(as.character(HD02_VD06))), 0, 
+                             as.numeric(as.character(HD02_VD06)) / 1.645),
+         SE_VD07 = if_else(is.na(as.numeric(as.character(HD02_VD07))), 0, 
+                             as.numeric(as.character(HD02_VD07)) / 1.645),
+         SE_VD08 = if_else(is.na(as.numeric(as.character(HD02_VD08))), 0, 
+                             as.numeric(as.character(HD02_VD08)) / 1.645) ) %>%
+  mutate(pctWhiteAlone     = HD01_VD02 * 100 / HD01_VD01,
+         pctWhiteAlone_SE  = SE_VD02 * 100 / HD01_VD01,
+         pctAfrAmAlone     = HD01_VD03 * 100 / HD01_VD01,
+         pctAfrAmAlone_SE  = SE_VD03 * 100 / HD01_VD01,
+         pctOtherAlone     = (HD01_VD04 + HD01_VD05 + HD01_VD06 + HD01_VD07) * 100 / HD01_VD01,
+         pctOtherAlone_SE  = sqrt(SE_VD04^2 + SE_VD05^2 + SE_VD06^2 + SE_VD07^2) * 100 / HD01_VD01,
+         pctMultiRacial    = HD01_VD08 * 100 / HD01_VD01,
+         pctMultiRacial_SE = SE_VD08 * 100 / HD01_VD01 ) %>%
+  select(state, 
+         district,
+         pctWhiteAlone,
+         pctWhiteAlone_SE,
+         pctAfrAmAlone,
+         pctAfrAmAlone_SE,
+         pctOtherAlone,
+         pctOtherAlone_SE,
+         pctMultiRacial,
+         pctMultiRacial_SE )
+
+# add year variable for use when 2012, 2014, 2016 are merged
+houseElection14DistFnl <- 
+  houseElection14Dist %>%
+  left_join(census2014Dist, by = c("state", "district")) %>%
+  left_join(race2014Dist, by = c("state", "district")) %>%
+  mutate(state             = factor(state),
+         year              = 2014,
+         popDensityPerSqMi = totalPop / areaSqMi)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection14DistFnl, file = "houseElection14DistFnl.csv", row.names = FALSE)
+```
+
+### 2016  
+```{r}
+houseElection16Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection16Dist.csv")
+
+# load Census Bureau 2016 district-level demo's data
+census2016Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_16_1YR_S0201_with_ann.csv")
+
+census2016Dist <- 
+  census2016Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(census2016Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "115th Congress"
+         district = str_replace(GEO.display.label, pattern = "115th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC entry
+  filter(state != "District of Columbia") %>%
+  # in order to include standard error estimates, need to first coerce to character and then convert to numeric
+  # also, U.S. Census PDF (see slide 39) indicates using MoE = 0 when entries have 5 *
+  # (https://www.census.gov/content/dam/Census/programs-surveys/acs/guidance/training-presentations/20180418_MOE.pdf)
+  # next, must convert to SE from MOE
+  # U.S. Census Bureau uses 90% level MOE (z = 1.645), so dividing by 1.645 yields SE
+  mutate(SE_VC135 = if_else(is.na(as.numeric(as.character(MOE_VC135))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC135)) / 1.645),
+         SE_VC136 = if_else(is.na(as.numeric(as.character(MOE_VC136))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC136)) / 1.645),
+         SE_VC197 = if_else(is.na(as.numeric(as.character(MOE_VC197))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC197)) / 1.645),
+         SE_VC201 = if_else(is.na(as.numeric(as.character(MOE_VC201))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC201)) / 1.645),
+         SE_VC11  = if_else(is.na(as.numeric(as.character(MOE_VC11))), 0, 
+                             as.numeric(as.character(MOE_VC11)) / 1.645),
+         SE_VC12  = if_else(is.na(as.numeric(as.character(MOE_VC12))), 0, 
+                             as.numeric(as.character(MOE_VC12)) / 1.645),
+         SE_VC13  = if_else(is.na(as.numeric(as.character(MOE_VC13))), 0, 
+                             as.numeric(as.character(MOE_VC13)) / 1.645),
+         SE_VC27  = if_else(is.na(as.numeric(as.character(MOE_VC27))), 0,   # this is different from 2012 
+                             as.numeric(as.character(MOE_VC27)) / 1.645),
+         SE_VC46  = if_else(is.na(as.numeric(as.character(MOE_VC46))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC46)) / 1.645),
+         SE_VC51  = if_else(is.na(as.numeric(as.character(MOE_VC51))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC51)) / 1.645),
+         SE_VC56  = if_else(is.na(as.numeric(as.character(MOE_VC56))), 0,   # this is different from 2012
+                             as.numeric(as.character(MOE_VC56)) / 1.645),
+         SE_VC137 = if_else(is.na(as.numeric(as.character(MOE_VC137))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC137)) / 1.645),
+         SE_VC138 = if_else(is.na(as.numeric(as.character(MOE_VC138))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC138)) / 1.645),
+         SE_VC139 = if_else(is.na(as.numeric(as.character(MOE_VC139))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC139)) / 1.645),
+         SE_VC145 = if_else(is.na(as.numeric(as.character(MOE_VC145))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC145)) / 1.645),
+         
+         SE_VC234 = if_else(is.na(as.numeric(as.character(MOE_VC234))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC234)) / 1.645),
+         SE_VC243 = if_else(is.na(as.numeric(as.character(MOE_VC243))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC243)) / 1.645),
+         SE_VC246 = if_else(is.na(as.numeric(as.character(MOE_VC246))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC246)) / 1.645),
+         SE_VC319 = if_else(is.na(as.numeric(as.character(MOE_VC319))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC319)) / 1.645),
+         SE_VC344 = if_else(is.na(as.numeric(as.character(MOE_VC344))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC344)) / 1.645),
+         SE_VC362 = if_else(is.na(as.numeric(as.character(MOE_VC362))), 0,  # this is different from 2012 
+                             as.numeric(as.character(MOE_VC362)) / 1.645),
+         SE_VC382 = if_else(is.na(as.numeric(as.character(MOE_VC382))), 0,  # this is different from 2012
+                             as.numeric(as.character(MOE_VC382)) / 1.645) ) %>%
+  # note: while not realistic, I will be treating variables as independent,
+  # so 0 correlation between added / subtracted variables
+  mutate(pctEduHSorLessAge25plus    = EST_VC135 + EST_VC136,  # this is different from 2012
+         pctEduHSorLessAge25plus_SE = sqrt(SE_VC135^2 + SE_VC136^2),
+         # for the next two variables, I am treating total U.S. population estimate as a constant
+         # only to allow for simpler approximation of SE
+         # this is very likely not a reasonable assumption in an analytical context
+         pctUSBorn                  = EST_VC197 * 100 / EST_VC11,  # this is different from 2012
+         pctUSBorn_SE               = SE_VC197 * 100 / EST_VC11,   # this is different from 2012
+         pctForgnBornUSCtzn         = EST_VC201 * 100 / EST_VC11,  # this is different from 2012
+         pctForgnBornUSCtzn_SE      = SE_VC201 * 100 / EST_VC11,   # this is different from 2012
+         ) %>%
+  # reduce to only the select demographics desired, renaming as appropriate
+  select(state, 
+         district,
+         totalPop                    = EST_VC11,
+         totalPop_SE                 = SE_VC11,
+         pctMale                     = EST_VC12,
+         pctMale_SE                  = SE_VC12,
+         pctFemale                   = EST_VC13,
+         pctFemale_SE                = SE_VC13,
+         medianAgeYr                 = EST_VC27,  # this is different from 2012
+         medianAgeYr_SE              = SE_VC27,   # this is different from 2012
+         
+         age18_34Pop                 = EST_VC46,  # this is different from 2012
+         age18_34Pop_SE              = SE_VC46,   # this is different from 2012
+         age35_64Pop                 = EST_VC51,  # this is different from 2012
+         age35_64Pop_SE              = SE_VC51,   # this is different from 2012
+         age65plusPop                = EST_VC56,  # this is different from 2012
+         age65plusPop_SE             = SE_VC56,   # this is different from 2012
+         pctEduHSorLessAge25plus,
+         pctEduHSorLessAge25plus_SE,
+         pctEduSomColgAge25plus      = EST_VC137, # this is different from 2012
+         pctEduSomColgAge25plus_SE   = SE_VC137,  # this is different from 2012
+         pctEduBachAge25plus         = EST_VC138, # this is different from 2012
+         pctEduBachAge25plus_SE      = SE_VC138,  # this is different from 2012
+         pctEduGradProAge25plus      = EST_VC139, # this is different from 2012
+         pctEduGradProAge25plus_SE   = SE_VC139,  # this is different from 2012
+         pctEduBachPlusAge25plus     = EST_VC145, # this is different from 2012
+         pctEduBachPlusAge25plus_SE  = SE_VC145,  # this is different from 2012
+         pctUSBorn,
+         pctUSBorn_SE,
+         pctForgnBornUSCtzn,
+         pctForgnBornUSCtzn_SE,
+         pctAge5PlusNonEnglshHome    = EST_VC234, # this is different from 2012
+         pctAge5PlusNonEnglshHome_SE = SE_VC234,  # this is different from 2012
+         pctInLaborForceUnemp        = EST_VC243, # this is different from 2012
+         pctInLaborForceUnemp_SE     = SE_VC243,  # this is different from 2012
+         pctNotInLaborForce          = EST_VC246, # this is different from 2012
+         pctNotInLaborForce_SE       = SE_VC246,  # this is different from 2012
+         medianHHIncome              = EST_VC319, # this is different from 2012
+         medianHHIncome_SE           = SE_VC319,  # this is different from 2012
+         perCapitaIncome             = EST_VC344, # this is different from 2012
+         perCapitaIncome_SE          = SE_VC344,  # this is different from 2012
+         pctNoHealthInsCivNonInst    = EST_VC362, # this is different from 2012
+         pctNoHealthInsCivNonInst_SE = SE_VC362,  # this is different from 2012
+         pctPovertyAge18_64          = EST_VC382, # this is different from 2012
+         pctPovertyAge18_64_SE       = SE_VC382)  # this is different from 2012
+  
+# B02001 file has race by Congressional district
+race2016Dist <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/ACS_16_1YR_B02001.csv")
+
+# same general process as with other census data file
+race2016Dist <- 
+  race2016Dist %>%
+  # isolate state and district # for each entry
+  # state is listed after the only comma in GEO.display.label
+  mutate(state    = unlist(str_split(GEO.display.label, pattern = ","))[seq(2, 2*nrow(race2016Dist), by = 2)],
+         state    = factor(str_trim(state)),
+         # district is the only other number in GEO.display.label aside from "115th Congress"
+         district = str_replace(GEO.display.label, pattern = "115th", replacement = ""),
+         district = str_extract(district, "[[:digit:]]+"),
+         district = if_else(is.na(district), 0L, as.integer(district)) ) %>%
+  # filter out DC and Puerto Rico entries
+  filter(state != "District of Columbia" & state != "Puerto Rico") %>%
+  mutate(SE_VD02 = if_else(is.na(as.numeric(as.character(HD02_VD02))), 0, 
+                             as.numeric(as.character(HD02_VD02)) / 1.645),
+         SE_VD03 = if_else(is.na(as.numeric(as.character(HD02_VD03))), 0, 
+                             as.numeric(as.character(HD02_VD03)) / 1.645),
+         SE_VD04 = if_else(is.na(as.numeric(as.character(HD02_VD04))), 0, 
+                             as.numeric(as.character(HD02_VD04)) / 1.645),
+         SE_VD05 = if_else(is.na(as.numeric(as.character(HD02_VD05))), 0, 
+                             as.numeric(as.character(HD02_VD05)) / 1.645),
+         SE_VD06 = if_else(is.na(as.numeric(as.character(HD02_VD06))), 0, 
+                             as.numeric(as.character(HD02_VD06)) / 1.645),
+         SE_VD07 = if_else(is.na(as.numeric(as.character(HD02_VD07))), 0, 
+                             as.numeric(as.character(HD02_VD07)) / 1.645),
+         SE_VD08 = if_else(is.na(as.numeric(as.character(HD02_VD08))), 0, 
+                             as.numeric(as.character(HD02_VD08)) / 1.645) ) %>%
+  mutate(pctWhiteAlone     = HD01_VD02 * 100 / HD01_VD01,
+         pctWhiteAlone_SE  = SE_VD02 * 100 / HD01_VD01,
+         pctAfrAmAlone     = HD01_VD03 * 100 / HD01_VD01,
+         pctAfrAmAlone_SE  = SE_VD03 * 100 / HD01_VD01,
+         pctOtherAlone     = (HD01_VD04 + HD01_VD05 + HD01_VD06 + HD01_VD07) * 100 / HD01_VD01,
+         pctOtherAlone_SE  = sqrt(SE_VD04^2 + SE_VD05^2 + SE_VD06^2 + SE_VD07^2) * 100 / HD01_VD01,
+         pctMultiRacial    = HD01_VD08 * 100 / HD01_VD01,
+         pctMultiRacial_SE = SE_VD08 * 100 / HD01_VD01 ) %>%
+  select(state, 
+         district,
+         pctWhiteAlone,
+         pctWhiteAlone_SE,
+         pctAfrAmAlone,
+         pctAfrAmAlone_SE,
+         pctOtherAlone,
+         pctOtherAlone_SE,
+         pctMultiRacial,
+         pctMultiRacial_SE )
+
+# add year variable for use when 2012, 2014, 2016 are merged
+houseElection16DistFnl <- 
+  houseElection16Dist %>%
+  left_join(census2016Dist, by = c("state", "district")) %>%
+  left_join(race2016Dist, by = c("state", "district")) %>%
+  mutate(state             = factor(state),
+         year              = 2016,
+         popDensityPerSqMi = totalPop / areaSqMi)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElection16DistFnl, file = "houseElection16DistFnl.csv", row.names = FALSE)
+```  
+
+### Final dataset merge
+```{r}
+houseElection12DistFnl <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection12DistFnl.csv")
+
+houseElection14DistFnl <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection14DistFnl.csv")
+
+houseElection16DistFnl <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElection16DistFnl.csv")
+
+library(tidyverse)
+
+# confirm all column names match
+sum(colnames(houseElection12DistFnl) == colnames(houseElection14DistFnl) &
+  colnames(houseElection12DistFnl) == colnames(houseElection16DistFnl)) / ncol(houseElection12DistFnl)
+
+# combine the three files by row
+houseElectionDat <- houseElection12DistFnl %>%
+  bind_rows(houseElection14DistFnl, houseElection16DistFnl)
+  
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElectionDat, file = "houseElectionDat.csv", row.names = FALSE) 
+```  
+
+```{r}
+# some minor formatting cleanup - factor conversion, variable ordering, etc.
+houseElectionDat <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat.csv")
+
+houseElectionDat <- 
+  houseElectionDat %>%
+  mutate(generalWinner = if_else(generalWinD == 1 & generalWinR == 0 & generalWinOth == 0, "D", 
+                           if_else(generalWinD == 0 & generalWinR == 1 & generalWinOth == 0, "R", 
+                             if_else(generalWinD == 0 & generalWinR == 0 & generalWinOth == 1, "Oth", "CHECK"))),
+         state         = as.factor(state),
+         district      = as.factor(district)) %>% # I think district reverts to integer anyway
+    select(state,
+         district,
+         year,
+         incumbentD:incumbentOth,
+         incumbentWinD:incumbentWinOth,
+         cmpgnTotRecptD:cmpgnMaxRecptOth,
+         cmpgnRecptTotal,
+         cmpgnTotDisbursD:cmpgnMaxDisbursOth,
+         cmpgnDisbursTotal,
+         primaryNumCandD,
+         primaryTotD, 
+         primaryMaxD,
+         primRunoffTotD,
+         primRunoffMaxD,
+         primaryUnopD,
+         primaryNumCandR,
+         primaryTotR, 
+         primaryMaxR,
+         primRunoffTotR,
+         primRunoffMaxR,
+         primaryUnopR,
+         primaryNumCandOth,
+         primaryTotOth, 
+         primaryMaxOth,
+         primRunoffTotOth,
+         primRunoffMaxOth,
+         primaryUnopOth,
+         primaryNumCandTotal,
+         primaryTotal,
+         generalNumCandD:generalTotD,
+         generalNumCandR:generalTotR,
+         generalNumCandOth:generalTotOth,
+         generalMaxD, generalUnopD,
+         generalMaxR, generalUnopR,
+         generalMaxOth, generalUnopOth,
+         generalWinD, generalWinR, generalWinOth,
+         generalWinner,
+         generalNumCandTotal, generalTotal,
+         areaSqMi:totalPop_SE, popDensityPerSqMi,
+         pctMale:pctMultiRacial_SE ) %>%
+  rename(cmpgnMaxRecptR = cmpgnTotMaxRecptR)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElectionDat, file = "houseElectionDat.csv", row.names = FALSE)
+```  
+
+```{r}
+# possible alternate if needed in the future
+# http://cdmaps.polisci.ucla.edu/tut/mapping_congress_in_R.html
+
+# include shapefile data for each district
+# get U.S. Congressional District shapefile for 2016 (same as for 2012 & 2014)
+library(USAboundaries)
+library(USAboundariesData)
+library(sf)
+
+allDistricts <- us_congressional(resolution = "high")
+
+# filter to US states only
+library(tidyverse)
+
+house115Districts <- 
+  allDistricts %>%
+  as_tibble() %>%
+  filter(state_name != "American Samoa" &  
+         state_name != "District of Columbia" &
+         state_name != "Guam" &
+         state_name != "Northern Mariana Islands" &
+         state_name != "Puerto Rico" &
+         state_name != "Virgin Islands") %>%
+  select(state    = state_name,
+         district = cd115fp,
+         geometry)
+
+# need each row repeated thrice - once for each year in the full dataset
+x <- 
+  house115Districts %>%
+  select(aland, geometry)
+
+# determine minimal number of variables needed for the geom
+library(ggplot2)
+
+ggplot(x) +
+  geom_sf(aes(fill = aland))
+
+# add in the geometry data to the full dataset
+houseElectionDat <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat.csv")
+
+house115DistGeom <- 
+  house115Districts %>% 
+  select(-aland) %>%
+  mutate(state = as.factor(state),
+         district = as.factor(as.integer(district)))
+
+houseElectionDatMap <- houseElectionDat %>%
+  left_join(house115DistGeom, by = c("state", "district")) %>%
+  mutate(state    = as.factor(state),
+         district = as.factor(district))
+```  
+
+## Create alternative district variable (combines state and district #)
+
+```{r, eval = F}
+houseElectionDat <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat.csv")
+
+houseElectionDat_std <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat_std.csv")
+
+library(tidyverse)
+library(stringi)
+
+houseElectionDat <- 
+  houseElectionDat %>%
+  mutate(state2    = state.abb[match(stri_trans_totitle(state),state.name)],
+         district2 = paste(state2, as.character(district), sep = "-") ) %>%
+  select(state, district, district2, year:pctMultiRacial_SE) %>%
+  # correcting two erroneous entries for 2014
+  mutate(primaryUnopR = if_else((year == 2014 & 
+                                (district2 == "VA-8" | district2 == "VA-10")), 0,
+                                as.double(primaryUnopR)),
+         # creating a few new variables based on pre-modeling EDA
+         primaryTotDvsR = primaryTotD - primaryTotR,
+         cmpgnMaxDisbursDvsR = cmpgnMaxDisbursD - cmpgnMaxDisbursR) %>%
+  # making sure the 2 new variables are in the desired column order
+  select(state:cmpgnMaxDisbursR, cmpgnMaxDisbursDvsR, cmpgnTotDisbursOth:primaryUnopR,
+         primaryTotDvsR, primaryNumCandOth:pctMultiRacial_SE)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData")
+write.csv(houseElectionDat, file = "houseElectionDat.csv", row.names = FALSE)
+
+houseElectionDat_std <- 
+  houseElectionDat_std %>%
+  mutate(state2    = state.abb[match(stri_trans_totitle(state),state.name)],
+         district2 = paste(state2, as.character(district), sep = "-") ) %>%
+  select(state, district, district2, year:diffDvsRGeneral) %>%
+  # correcting two erroneous entries for 2014
+  mutate(primaryUnopR = if_else((year == 2014 & 
+                                (district2 == "VA-8" | district2 == "VA-10")), 0,
+                                as.double(primaryUnopR)) ) %>%
+
+write.csv(houseElectionDat_std, file = "houseElectionDat_std.csv", row.names = FALSE)
+```
+
+```{r}
+# late addition - log of popDensitySqMi rather than "natural scale"
+library(tidyverse)
+
+houseElectionDat <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat.csv")
+
+houseElectionDat <- 
+  houseElectionDat %>%
+  mutate(log_popDensPerSqMi = log(popDensityPerSqMi))
+
+write.csv(houseElectionDat, file = "houseElectionDat.csv", row.names = FALSE)
+
+# create standardized version for houseElectionDat_std file
+
+log_popDens12 <- 
+  houseElectionDat %>%
+  filter(year == 2012) %>%
+  select(log_popDensPerSqMi) %>%
+  as_vector()
+
+log_popDens12_std <- 
+  (log_popDens12 - mean(log_popDens12)) / sd(log_popDens12)
+
+log_popDens14 <- 
+  houseElectionDat %>%
+  filter(year == 2014) %>%
+  select(log_popDensPerSqMi) %>%
+  as_vector()
+
+log_popDens14_std <- 
+  (log_popDens14 - mean(log_popDens14)) / sd(log_popDens14)
+
+log_popDens16 <- 
+  houseElectionDat %>%
+  filter(year == 2016) %>%
+  select(log_popDensPerSqMi) %>%
+  as_vector()
+
+log_popDens16_std <- 
+  (log_popDens16 - mean(log_popDens16)) / sd(log_popDens16)
+
+log_popDens_std <- 
+  c(log_popDens12_std, log_popDens14_std, log_popDens16_std)
+
+houseElectionDat_std <- 
+  read.csv("C:/Users/Duane/Documents/Academic/Villanova/4. Fall 18/ProjectData/houseElectionDat_std.csv")
+
+houseElectionDat_std <- 
+  houseElectionDat_std %>%
+  mutate(log_popDensPerSqMi = log_popDens_std) %>%
+  select(-diffDvsRGeneral)
+
+write.csv(houseElectionDat_std, file = "houseElectionDat_std.csv", row.names = FALSE)
+```

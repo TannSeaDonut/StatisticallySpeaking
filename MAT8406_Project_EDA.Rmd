@@ -1,0 +1,1130 @@
+---
+params:
+  d: !r Sys.Date()
+output: pdf_document
+---
+---
+title: "MAT8406_Project_EDA"
+author: "Duane Stanton"
+date: `r params$d`
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load ggplot2 theme & color templates
+theme_ds2 <- function(base_size = 14){
+  theme_bw(base_size = base_size) %+replace%
+    theme(
+      #line = element_line(color = "#000000"),
+      #text = element_text(color = "#000000"),
+      axis.title = element_text(color = "#000000", face = "plain"),
+      axis.text = element_text(color="#000000", size = 13),
+      axis.line = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      #axis.line.y = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      legend.key = element_rect(color="#D2E2F9", fill = "#FFFFFF", linetype = 0),
+      legend.title = element_text(size = 12, face = "plain"),
+      legend.title.align = 0.5,
+      legend.text = element_text(size = 12.5),
+      legend.background = element_rect(size = 0.1, color = "#A0A0A0", 
+                                       fill = NA, linetype = 1),
+      panel.grid = element_line(color = "#FFFFFF", linetype = 0),   
+      panel.border = element_rect(color = NA, fill = NA),
+      panel.background = element_rect(color = NA, fill = "#FFFFFF"),
+      #plot.title = element_text(color = "#000000"),
+      plot.background = element_rect(color = NA, fill = "#FFFFFF"),
+      plot.title = element_text(hjust = 0.5, face = "plain"),
+      plot.caption=element_text(size=11, hjust=1, face="italic", color="black")
+      #strip.text = element_text(size = 12),
+      #strip.background = element_rect(fill = NA)
+      )
+}
+
+color_set6 <- c("#00205B", "#13b5ea", "#CDB87D", "#EEB31B", "#894600", "#E27400")
+blues_set5 <- c("#89AFF6", "#4782EF", "#014BD1", "#01328C","#00205B")
+```
+
+```{r, message = FALSE}
+# Reading in the data and setting levels for RPS2015 variable
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+library(dplyr)
+finalDat <- read.csv("finalDat.csv")
+
+## Create stateName var (U.S. full state name in lowercase) to work with ggplot2 maps
+## Order levels of rps2015
+## Combine some educPct_ variables
+
+finalDat <- finalDat %>% 
+  mutate(stateName = tolower(state.name[match(state,state.abb)]),
+         rps2015 = factor(rps2015, levels = c("No", "Voluntary", "Yes")),
+         eduPctHSOrLess = eduPctLTHS + eduPctHS,
+         eduPctBacGradProf = eduPctBac + eduPctGradProf)
+```
+
+
+
+## Background Technical Notes:  
+
+* BTU = British Thermal Unit; Energy needed to heat 0.45kg of water 1F  
+
+* Per the U.S. Dept. of Energy, **"1 trillion Btu is equal to about 51,000 tons of coal"**  
+    * Source: https://www.energy.gov/articles/how-much-energy-does-your-state-produce ; accessed 18 Apr 2018  
+* Per Capita Annual U.S. Primary Energy Consumption in 2016: 301 mn BTU
+    * Source: https://www.eia.gov/tools/faqs/faq.php?id=85&t=1
+    * Daily energy consumption: 301mn/366 = 822,404.4 BTU per capita
+    * 3,412 BTU per kW/h of electricity --> 
+    * 822404.4/3412 = 241.03 kW/h per capita energy consumption (if all electric)
+
+## Exploratory Data Analysis
+
+```{r}
+# Quick Summary of All Variables
+summary(finalDat)
+```
+
+### Univariate Summaries
+
+```{r}
+# Closer look at Natural Gas, Petroleum, Nuclear, and Hydrothermal Energy Consumption
+
+library(ggplot2)
+ggplot(finalDat, aes(x = natGasECons)) +
+  geom_histogram(col = "white", fill = color_set6[5], bins = 20) +
+  labs(title = "Histogram of Natural Gas Consumption", x = "Tn BTU", y = "Count") +
+  theme_ds2()
+
+ggplot(finalDat, aes(x = petroECons)) +
+  geom_histogram(col = "white", fill = color_set6[5], bins = 20) +
+  labs(title = "Histogram of Petroleum Consumption", x = "Tn BTU", y = "Count") +
+  theme_ds2()
+
+ggplot(finalDat, aes(x = nclrECons)) +
+  geom_histogram(col = "white", fill = color_set6[6], bins = 20) +
+  labs(title = "Histogram of Nuclear Energy Consumption", x = "Tn BTU", y = "Count") +
+  theme_ds2()
+
+ggplot(finalDat, aes(x = hydroECons)) +
+  geom_histogram(col = "white", fill = color_set6[4], bins = 20) +
+  labs(title = "Histogram of Hydroelectric Consumption", x = "Tn BTU", y = "Count") +
+  theme_ds2()
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/xxxx.png", plot = , height = 5, width = 10)
+```
+
+```{r}
+# Univariate distribution of two outcome variables explored, plus netEBalance and totECons
+
+univPlot1 <- ggplot(finalDat, aes(x = eConsIndex)) +
+  geom_histogram(col = "white", fill = color_set6[6], bins = 20) +
+  labs(title = "% Renewable Energy minus % Fossil Fuel \n Consumption in 2015", 
+       x = "%pt diff. betw. Renewable and Fossil Fuel Energy Consumption", y = "Count") +
+  theme_ds2()
+
+univPlot2 <- ggplot(finalDat, aes(x = eConsPctFF)) +
+  geom_histogram(col = "white", fill = color_set6[5], bins = 20) +
+  labs(title = "Fossil Fuel Energy Consumption \n as % of Total Consumption", 
+       x = "% Fossil Fuel Energy Consumption of Total", y = "Count") +
+  theme_ds2() +
+  theme(plot.margin = unit(rep(0.5,4), "cm"))
+
+univPlot3 <- ggplot(finalDat, aes(x = netEBalance)) +
+  geom_histogram(col = "white", fill = color_set6[6], bins = 20) +
+  scale_x_continuous(breaks = seq(-5000,10000,2500)) +
+  labs(title = "Net Energy Balance", 
+       x = "Production minus Consumption, tnBTUs", y = "Count", 
+       subtitle = "Positive values indicate energy exports") +
+  theme_ds2()
+
+univPlot4 <- ggplot(finalDat, aes(x = totECons)) +
+  geom_histogram(col = "white", fill = color_set6[6], bins = 20) +
+  scale_x_continuous(breaks = seq(0,15000,2500)) +
+  labs(title = "Total Energy Consumption", 
+       x = "tnBTUs", y = "Count") +
+  theme_ds2()
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/univPlot1.png", plot = univPlot1, width = 5, height = 3)
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/univPlot2.png", plot = univPlot2, width = 5, height = 3)
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/univPlot3.png", plot = univPlot3)
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/univPlot4.png", plot = univPlot4)
+
+univPlot1
+univPlot2
+univPlot3
+univPlot4
+
+rm(univPlot1, univPlot2, univPlot3, univPlot4)
+```
+
+### Multivariate Summaries
+
+```{r, message = FALSE}
+# Creating ridge plots to detail energy consumption by specific sources across types
+# Creating two sets of ridge plot sets - one including all Total categories,
+# one including only Total Renewables
+library(dplyr)
+library(tidyr)
+
+# Version including all Total categories
+
+# Create lookup table to convert energy consumption descriptors
+lut <- c("gthrmECons" = "Geothermal", "hydroECons" = "Hydroelectric", "solarECons" = "Solar",
+         "windECons" = "Wind", "rETotCons" = "Total Renewables", "biomassECons" = "Biomass", 
+         "nclrECons" = "Nuclear", "ffETotCons" = "Total Fossil Fuels",
+         "coalECons" = "Coal", "natGasECons" = "Natural Gas", "petroECons" = "Petroleum",
+         "totECons" = "Total Overall")
+
+# Rearrange the data to work with ggplot2
+eConsDat <- finalDat %>% 
+  select(state, gthrmECons, hydroECons, solarECons, windECons, rETotCons,
+         biomassECons, nclrECons, coalECons, natGasECons, petroECons, ffETotCons,
+         totECons) %>%
+  gather(key = "eConSource", value = tnBTU, -state) %>%
+  mutate(eConSource = factor(lut[eConSource], 
+         levels = c("Total Overall", "Total Renewables", "Geothermal", "Hydroelectric",
+                    "Solar", "Wind", "Biomass", "Nuclear", "Total Fossil Fuels", "Coal",
+                    "Natural Gas", "Petroleum")),
+         eType = factor(if_else(eConSource %in% 
+                                  c("Total Renewables", "Geothermal", "Hydroelectric", 
+                                    "Solar", "Wind"), "renewable", 
+                         if_else(eConSource %in% 
+                                   c("Total Fossil Fuels", "Coal", "Natural Gas", 
+                                     "Petroleum"), "fossil fuel",
+                                 "other")), 
+                        levels = c("other", "fossil fuel", "renewable")))
+
+# Vector to set desired order of density ridges
+ridgeOrder <- c("Wind", "Solar", "Hydroelectric", "Geothermal", "Total Renewables",
+                "Nuclear", "Biomass", "Petroleum", "Natural Gas", "Coal", 
+                "Total Fossil Fuels", "Total Overall")
+
+# Vector to set colors by category
+fillCols <- c("other" = color_set6[6], "fossil fuel" = color_set6[5],
+              "renewable" = color_set6[4])
+
+# Function to make Total category labels bold
+# Modified from StackResource user hrbrmster from the below link:
+# https://stackoverflow.com/questions/39694490/highlighting-individual-axis-labels-in-bold-using-ggplot2#39695859
+embolden <- function(src, boldThis) {
+  if (!is.factor(src)) src <- factor(src)                    # make sure it's a factor
+  src_levels <- levels(src)                                  # retrieve the levels in their order
+  brave <- boldThis %in% src_levels                          # make sure everything we want bold in factor levels
+  if (all(brave)) {                                          # if so
+    b_pos <- purrr::map_int(boldThis, ~which(.==src_levels)) # then find out where they are
+    b_vec <- rep("plain", length(src_levels))                # make'm all plain first
+    b_vec[b_pos] <- "bold"                                   # make our targets bold
+    b_vec                                                    # return the new vector
+  } else {
+    stop("All elements of 'boldThis' must be in src")
+  }
+}
+
+# Create boldList and fullList for the first plot set
+boldList1 <- c("Total Overall", "Total Fossil Fuels", "Total Renewables")
+fullList1 <- factor(ridgeOrder, levels = ridgeOrder)
+
+# Create joyplots to summarize energy consumption by source
+library(ggplot2)
+library(ggridges)
+
+ggplot(eConsDat, aes(x = tnBTU, y = eConSource, fill = eType)) +
+  geom_density_ridges(scale = 1, rel_min_height = 0.01) +
+  scale_x_continuous(breaks = seq(0,15000,2500)) +
+  scale_y_discrete(limits = ridgeOrder) +
+  scale_fill_manual(values = fillCols, guide = FALSE) +
+  labs(title = "Density Ridge Plot of Energy Consumption \n by Category",
+       x = "tnBTUs", y = "Energy Source") +
+  theme_ds2() +
+  theme(panel.grid.major.y = element_line(color = "lightgrey", linetype = 1)) +
+  theme(axis.text.y=element_text(face=embolden(fullList1, boldList1)))
+
+# Version excluding Total categories except for Total Renewables
+
+# Create lookup table to convert energy consumption descriptors
+lut2 <- c("gthrmECons" = "Geothermal", "hydroECons" = "Hydroelectric", "solarECons" = "Solar",
+         "windECons" = "Wind", "rETotCons" = "Total Renewables", "biomassECons" = "Biomass", 
+         "nclrECons" = "Nuclear", "coalECons" = "Coal", "natGasECons" = "Natural Gas", 
+         "petroECons" = "Petroleum")
+
+# Rearrange the data to work with ggplot2
+eConsDat2 <- finalDat %>% 
+  select(state, gthrmECons, hydroECons, solarECons, windECons, rETotCons,
+         biomassECons, nclrECons, coalECons, natGasECons, petroECons) %>%
+  gather(key = "eConSource", value = tnBTU, -state) %>%
+  mutate(eConSource = factor(lut[eConSource], 
+         levels = c("Total Renewables", "Geothermal", "Hydroelectric", "Solar", 
+                    "Wind", "Biomass", "Nuclear", "Coal", "Natural Gas", "Petroleum")),
+         eType = factor(if_else(eConSource %in% 
+                                  c("Total Renewables", "Geothermal", "Hydroelectric", 
+                                    "Solar", "Wind"), "renewable", 
+                         if_else(eConSource %in% 
+                                   c("Coal", "Natural Gas", 
+                                     "Petroleum"), "fossil fuel",
+                                 "other")), 
+                        levels = c("other", "fossil fuel", "renewable")))
+
+# Vector to set desired order of density ridges
+ridgeOrder2 <- c("Wind", "Solar", "Hydroelectric", "Geothermal", "Total Renewables",
+                "Nuclear", "Biomass", "Petroleum", "Natural Gas", "Coal")
+
+# Vector to set colors by category - same as "full" version
+fillCols <- c("other" = color_set6[6], "fossil fuel" = color_set6[5],
+              "renewable" = color_set6[4])
+
+# Create boldList and fullList for the second plot set
+boldList2 <- ("Total Renewables")
+fullList2 <- factor(ridgeOrder2, levels = ridgeOrder2)
+
+eConsPlot1 <- ggplot(eConsDat2, aes(x = tnBTU, y = eConSource, fill = eType)) +
+  geom_density_ridges(scale = 1, rel_min_height = 0.01) +
+  scale_x_continuous(breaks = seq(0,7000,1000)) +
+  scale_y_discrete(limits = ridgeOrder2) +
+  scale_fill_manual(values = fillCols, guide = FALSE) +
+  labs(title = "Density Ridge Plot of Energy Consumption \n by Category",
+       x = "tnBTUs", y = "Energy Source") +
+  theme_ds2() +
+  theme(panel.grid.major.y = element_line(color = "lightgrey", linetype = 1)) +
+  theme(axis.text.y=element_text(face=embolden(fullList2, boldList2)))
+
+eConsPlot2 <- ggplot(eConsDat2, aes(y = tnBTU, x = eConSource, col = eType)) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(0,7000,1000)) +
+  scale_x_discrete(limits = ridgeOrder2) +
+  scale_color_manual(values = fillCols, guide = FALSE) +
+  labs(title = "Boxplots of Energy Consumption \n by Category",
+       y = "tnBTUs", x = "Energy Source") +
+  theme_ds2() +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank()) +
+  coord_flip()
+
+library(cowplot)
+eConsPlots <- plot_grid(eConsPlot1, eConsPlot2, ncol = 2, align = "h", rel_widths = c(1,0.75))
+
+eConsPlots
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/eConsPlots.png", plot = eConsPlots, width = 10, height = 5)
+
+rm(lut, eConsDat, ridgeOrder, fillCols, boldList1, fullList1, lut2, eConsDat2, ridgeOrder2, boldList2, fullList2, eConsPlot1, eConsPlot2, eConsPlots)
+```
+
+### State Population in 1,000s
+```{r, message = FALSE}
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  scale_fill_gradient(low = "lightgrey", high = blues_set5[5]),
+  theme_ds2())
+
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = statePopK/1000), color = "darkgrey", map = fifty_states) +
+  map_plot_defaults +
+  scale_fill_gradient(name = "Pop. (mn)", low = "lightgrey", high = blues_set5[5]) +
+  labs(title = "Population in Millions", x = "", y = "")
+```
+
+### State GDP and Proportion of GDP by Industry
+```{r, message = FALSE}
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  scale_fill_gradient(low = "lightgrey", high = blues_set5[5]),
+  theme_ds2())
+
+# State GDP in billions of USD
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpTotMn/1000), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "Bn USD", low = "lightgrey", high = blues_set5[5]) +
+  labs(title = "Total State GDP, in Billions of USD", x = "", y = "")
+
+# Scatterplot of state population in thousands and GDP in billions
+ggplot(finalDat, aes(x = statePopK, y = gdpTotMn/1000)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_text(aes(label = state), alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.7) +
+  labs(title = "Plot of State GDP on State Population", 
+       x = "State Population, in Thousands", 
+       y = "Total State GDP, in Billions of USD") +
+  theme_ds2()
+
+# Proportion of GDP from Business and Professional Services
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctBusProfSvc), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Business and Professional Services", 
+       x = "", y = "")
+
+# Proportion of GDP from Government
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctGovt), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Government", 
+       x = "", y = "")
+
+### Proportion of GDP from Hospitality
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctHosp), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Hospitality", 
+       x = "", y = "")
+
+### Proportion of GDP from Manufacturing
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctManuf), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Manufacturing", 
+       x = "", y = "")
+
+### Proportion of GDP from Mining
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctMining), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Mining", 
+       x = "", y = "")
+
+### Proportion of GDP from Utilities
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctUtil), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Utilities", 
+       x = "", y = "")
+
+### Proportion of GDP from Other Industries
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPctOth), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Proportion of State GDP from \n Other Industries", 
+       x = "", y = "")
+```
+
+### Education levels (population age 25+) and Per Capita GDP / Income
+```{r, message = FALSE}
+## Plot US states by education levels and per capita GDP / income
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  scale_fill_gradient(low = "lightgrey", high = blues_set5[5]),
+  theme_ds2())
+
+### Less than High School Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctLTHS), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with Less than High School Education",
+       x = "", y = "")
+
+### High School Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctHS), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with High School Education", 
+       x = "", y = "")
+
+### High School or Less Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctHSOrLess), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with High School Education or Less",
+       x = "", y = "")
+
+### Associate's Degree or Some College Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctSmColAssoc), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with an Associate's Degree \n or Some College", 
+       x = "", y = "")
+
+### Bachelor's Degree Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctBac), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with a Bachelor's Degree", 
+       x = "", y = "")
+
+### Graduate or Professional Degree Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctGradProf), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with a Graduate or Professional Degree", 
+       x = "", y = "")
+
+### Bachelor's Degree, Graduate, or Professional Degree Education
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eduPctBacGradProf), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "% of State Population Age 25+ \n with at least a Bachelor's Degree", 
+       x = "", y = "")
+
+### Per Capita GDP by State
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gdpPerCapK), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Per Capita GDP by State, in 1,000 USD", x = "", y = "")
+
+### Per Capita Personal Income by State
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = persIncPerCapK), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  labs(title = "Per Capita Personal Income by State, in 1,000 USD", x = "", y = "")
+# Note: r = 0.815 correlation betw. EduPctGradProf and PersIncpercapk
+
+### Comparing Per Capita GDP by State and Per Capita Personal Income by State
+ggplot(finalDat, aes(x = gdpPerCapK, y = persIncPerCapK)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_text(aes(label = state), alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.7) +
+  labs(title = "Plot of Per Capita GDP by State \n on Per Capita Personal Income by State", 
+       x = "Per Capita GDP (in 1,000s USD) by State", 
+       y = "Per Capita Personal Income \n (in 1,000s USD) by State") +
+  theme_ds2()
+```
+
+### 2014 Midterm (Representative) and 2016 Presidential Election Voting
+```{r}
+# Comparing % Democrat Representatives (2014 midterm elections) vs.
+# % votes for Democrat
+library(ggplot2)
+ggplot(finalDat, aes(x = house2014PctDem, y = pres2016PctDem)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_text(aes(label = state), alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.7) +
+  labs(title = "Plot of % 2016 Presidential Vote Share for Democratic Candidate \n on % Democratic Rep Composition in 2014 Election", 
+       x = "% of 2014 Representatives from Democractic Party", 
+       y = "% of 2016 Presidential Votes \n for Democratic Party Candidate") +
+  theme_ds2()
+```
+
+### Energy Consumption Index (% Renewable Energy Consumption - % Fossil Fuel Energy Consumption)
+```{r, warning = FALSE}
+library(ggplot2)
+library(fiftystater)
+
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eConsIndex), color = "darkgrey", map = fifty_states) +
+  expand_limits(x = fifty_states$long, y = fifty_states$lat) +
+  coord_map() +
+  scale_x_continuous(breaks = NULL) +
+  scale_y_continuous(breaks = NULL) +
+  scale_fill_gradient(name = "% RE Cons - % FF Cons", low = color_set6[5], high = color_set6[4]) +
+  labs(title = "% Renewable Energy minus % Fossil Fuel \n Consumption in 2015", 
+       x = "", y = "") +
+  theme_ds2()
+
+# Scatterplot using the same two variables
+
+ggplot(data = finalDat, aes(x = eConsPctRE/100, y = eConsPctRE/100)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_text(aes(label = state), alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.7) +
+  labs(title = "Plot of % Fossil Fuel Consumption \n on % Renewable Energy Consumption", 
+       x = "% Renewable Energy Consumption", 
+       y = "% Fossil Fuel Consumption") +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_ds2()
+```
+
+### Total Energy Consumption and Production and Net Energy Balance in BTUs
+```{r}
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  theme_ds2()) 
+
+# Total Energy Consumption in Trillions of BTUs
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[6]) +
+  labs(title = "Total Energy Consumption", 
+       x = "", y = "",
+       caption = "BTU = British Thermal Unit; 
+       Energy needed to heat 0.45kg of water 1F")
+
+# Total Energy Production in Trillions of BTUs
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = totEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[6]) +
+  labs(title = "Total Energy Production", 
+       x = "", y = "")
+
+# Net Energy Balance in Trillions of BTUs
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = netEBalance), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = color_set6[1], high = color_set6[6]) +
+  labs(title = "Net Energy Balance", 
+       x = "", y = "", subtitle = "Positive values indicate energy exports")
+
+# Ratio of Total Consumption to Total Production
+# Created based on post-presentation feedback
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = (totECons / totEProd)), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "Consumption:Production Ratio", low = color_set6[1], high = color_set6[6]) +
+  labs(title = "Energy Balance - Ratio of Consumption to Production", 
+       x = "", y = "", subtitle = ">1: Cons > Prod; <1: Cons < Prod",
+       caption: "Only DE stands out for high condumption relative to production")
+
+```
+
+### Consumption and Production of Renewable Energy in BTUs
+```{r}
+library(ggplot2)
+library(fiftystater)
+library(cowplot)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  theme_ds2(),
+  theme(legend.position = "bottom", legend.text = element_text(size = 11)))
+
+
+### Renewable Energy Production/Consumption in Trillions of BTUs
+rePlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = rETotCons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[4]) +
+  labs(title = "Renewable Energy Consumption \n Total", 
+       x = "", y = "")
+
+### Renewable Energy Production/Consumption as % of Total Energy Consumption
+rePlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eConsPctRE/100), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[4],
+                      labels = scales::percent) +
+  labs(title = "Renewable Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(rePlot1, rePlot2, align = "h")
+
+### Geothermal Energy Production/Consumption (treated as equivalent) in Trillions of BTUs
+gthrmPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gthrmECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[4]) +
+  labs(title = "Geothermal Energy Consumption \n Total", 
+       x = "", y = "")
+
+gthrmPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = gthrmECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[4],
+                      labels = scales::percent) +
+  labs(title = "Geothermal Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(gthrmPlot1, gthrmPlot2, align = "h")
+
+### Hydropower Energy Production/Consumption (treated as equivalent) in Trillions of BTUs
+hydroPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = hydroECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[4]) +
+  labs(title = "Hydropower Energy Consumption \n Total", 
+       x = "", y = "")
+
+hydroPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = hydroECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[4],
+                      labels = scales::percent) +
+  labs(title = "Hydropower Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(hydroPlot1, hydroPlot2, align = "h")
+
+### Solar Energy Production/Consumption (treated as equivalent) in Trillions of BTUs
+solarPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = solarECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[4]) +
+  labs(title = "Solar Energy Consumption \n Total", 
+       x = "", y = "")
+
+solarPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = solarECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[4],
+                      labels = scales::percent) +
+  labs(title = "Solar Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(solarPlot1, solarPlot2, align = "h")
+
+### Wind Energy Production/Consumption (treated as equivalent) in Trillions of BTUs
+windPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = windECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[4]) +
+  labs(title = "Wind Energy Consumption \n Total", 
+       x = "", y = "")
+
+windPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = windECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[4],
+                      labels = scales::percent) +
+  labs(title = "Wind Energy Consumption \n % of Total Consumption", 
+       x = "", y = "") +
+  theme(legend.text = element_text(size = 8))
+
+plot_grid(windPlot1, windPlot2, align = "h")
+
+### Nuclear Energy Production/Consumption (treated as equivalent) in Trillions of BTUs
+nclrPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = nclrECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[6]) +
+  labs(title = "Nuclear Energy Consumption \n Total", 
+       x = "", y = "")
+
+nclrPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = nclrECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[6],
+                      labels = scales::percent) +
+  labs(title = "Nuclear Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(nclrPlot1, nclrPlot2, align = "h")
+
+### Biomass Energy Consumption in Trillions of BTUs
+bmsConsPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = biomassECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[6]) +
+  labs(title = "Biomass Energy Consumption \n Total", 
+       x = "", y = "")
+
+bmsConsPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = biomassECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+ scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[6],
+                      labels = scales::percent) +
+  labs(title = "Biomass Energy Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(bmsConsPlot1, bmsConsPlot2, align = "h")
+
+### Biomass Energy Production in Trillions of BTUs
+bmsProdPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = biomassEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[6]) +
+  labs(title = "Biomass Energy Production \n Total", 
+       x = "", y = "")
+
+bmsProdPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = biomassEProd/totEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Prod", low = "lightgrey", high = color_set6[6],
+                      labels = scales::percent) +
+  labs(title = "Biomass Energy Production \n % of Total Production", 
+       x = "", y = "")
+
+plot_grid(bmsProdPlot1, bmsProdPlot2, align = "h")
+
+rm(rePlot1, rePlot2, gthrmPlot1, gthrmPlot2, hydroPlot1, hydroPlot2, solarPlot1, solarPlot2, windPlot1, windPlot2, nclrPlot1, nclrPlot2, bmsConsPlot1, bmsConsPlot2, bmsProdPlot1, bmsProdPlot2)
+```
+
+### Consumption and Production of Fossil Fuels in BTUs
+```{r}
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  theme_ds2(),
+  theme(legend.position = "bottom", legend.text = element_text(size = 11)))
+
+### Fossil Fuel Consumption in Trillions of BTUs
+ffConsPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = ffETotCons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Fossil Fuel Consumption \n Total", 
+       x = "", y = "")
+
+### Fossil Fuel Energy Consumption as % of Total Energy Consumption
+ffConsPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = eConsPctFF/100), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Fossil Fuel Consumption \n % of Total Consumption", 
+       x = "", y = "") +
+  theme(legend.text = element_text(size = 10))
+
+plot_grid(ffConsPlot1, ffConsPlot2, align = "h")
+
+### Fossil Fuel Production in Trillions of BTUs
+ffProdPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = ffETotProd), color = "darkgrey", 
+           map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Fossil Fuel Production \n Total", 
+       x = "", y = "")
+
+ffProdPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = ffETotProd/totEProd), color = "darkgrey", 
+           map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Prod", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Fossil Fuel Production \n % of Total Production", 
+       x = "", y = "")
+
+plot_grid(ffProdPlot1, ffProdPlot2, align = "h")
+
+### Coal Consumption in Trillions of BTUs
+coalConsPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = coalECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Coal Consumption \n Total", 
+       x = "", y = "")
+
+coalConsPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = coalECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent)
+  labs(title = "Coal Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(coalConsPlot1, coalConsPlot2, align = "h")  
+  
+### Coal Production in Trillions of BTUs
+coalProdPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = coalEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Coal Production \n Total", 
+       x = "", y = "")
+
+coalProdPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = coalEProd/totEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Prod", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Coal Production \n % of Total Production", 
+       x = "", y = "")
+
+plot_grid(coalProdPlot1, coalProdPlot2, align = "h")
+
+### Natural Gas Consumption in Trillions of BTUs
+ngConsPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = natGasECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Natural Gas Consumption \n Total", 
+       x = "", y = "")
+
+ngConsPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = natGasECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Natural Gas Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(ngConsPlot1, ngConsPlot2, align = "h")  
+
+### Natural Gas Production in Trillions of BTUs
+ngProdPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = natGasEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Natural Gas Production \n Total", 
+       x = "", y = "")
+
+ngProdPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = natGasEProd/totEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Prod", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Natural Gas Production \n % of Total Production", 
+       x = "", y = "")
+
+plot_grid(ngProdPlot1, ngProdPlot2, align = "h")
+
+### Petroleum Consumption in Trillions of BTUs
+petroConsPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = petroECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Petroleum Consumption \n Total", 
+       x = "", y = "")
+
+petroConsPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = petroECons/totECons), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Cons", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Petroleum Consumption \n % of Total Consumption", 
+       x = "", y = "")
+
+plot_grid(petroConsPlot1, petroConsPlot2, align = "h")
+
+### Crude Oil Production in Trillions of BTUs
+oilProdPlot1 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = petroEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "tnBTUs", low = "lightgrey", high = color_set6[5]) +
+  labs(title = "Crude Oil Production \n Total", 
+       x = "", y = "")
+
+oilProdPlot2 <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = petroEProd/totEProd), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "% Total E Prod", low = "lightgrey", high = color_set6[5],
+                      labels = scales::percent) +
+  labs(title = "Crude Oil Production \n % of Total Production", 
+       x = "", y = "")
+
+plot_grid(oilProdPlot1, oilProdPlot2, align = "h")
+
+rm()
+```
+
+### Mean Annual Solar Insolation and Wind Speed at 50m Off the Ground
+```{r}
+library(ggplot2)
+library(fiftystater)
+
+# Create some default plot settings to reduce lengthy code chunks
+map_plot_defaults <- list(expand_limits(x = fifty_states$long, y = fifty_states$lat),
+  coord_map(),
+  scale_x_continuous(breaks = NULL),
+  scale_y_continuous(breaks = NULL),
+  theme_ds2())
+
+### Mean Annual Solar Insolation
+insolPlot <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = annMeanInsol), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = expression(paste("kW/m",""^2," per day")),
+                      low = color_set6[1], high = color_set6[4]) +
+  labs(title = expression(paste("Mean Annual Solar Insolation (kW/m",""^2," per day)")), 
+                                x = "", y = "") +
+  theme(legend.position = "bottom")
+
+### Mean Annual Wind Speed at 50m off the ground
+windSpdPlot <- ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = annMeanWs50m), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_gradient(name = "mph",
+                      low = color_set6[1], high = color_set6[4]) +
+  labs(title = expression(paste("Mean Annual Wind Speed at Height 50m (mph)")), 
+                                x = "", y = "") +
+  theme(legend.position = "bottom")
+
+insolPlot
+windSpdPlot
+
+library(cowplot)
+nasaPlots <- plot_grid(insolPlot, windSpdPlot, ncol = 2, align = "h")
+
+nasaPlots
+
+ggsave(filename = "C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/Graphics/nasaPlots.png", plot = nasaPlots, width = 10, height = 6)
+
+### Scatterplot of Mean Wind Speed at 50m off the ground on Mean Solar Insolation
+# Using relative percentiles for each variable
+
+# Generate percentile assignments to Solar Insolation and Wind Speed variables,
+# then convert the percentile labels to numeric values tied to the correct state
+library(dplyr)
+library(stringr)
+dat1 <- finalDat %>% arrange(annMeanInsol) %>%
+  mutate(insolPctl = names(quantile(annMeanInsol, 
+                               probs = seq(0, 1, (1/(nrow(finalDat)-1)))))) %>%
+  mutate(insolPctl = as.numeric(str_remove(insolPctl,"%"))) %>%
+  select(state, insolPctl)
+
+dat2 <- finalDat %>% arrange(annMeanWs50m) %>%
+  mutate(ws50mPctl = names(quantile(annMeanWs50m, 
+                               probs = seq(0, 1, (1/(nrow(finalDat)-1)))))) %>%
+  mutate(ws50mPctl = as.numeric(str_remove(ws50mPctl,"%"))) %>%
+  select(state, ws50mPctl)
+  
+dat <- left_join(dat1, dat2, by = "state")
+rm(dat1, dat2)
+ 
+ggplot(dat, aes(x = insolPctl, y = ws50mPctl)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_text(aes(label = state), alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.7) +
+  geom_vline(xintercept = 50, col = "lightgrey") +
+  geom_hline(yintercept = 50, col = "lightgrey") +
+  labs(title = "Plot of Pctls, Annual Mean Wind Speed at Height 50m \n on Annual Mean Solar Insolation", 
+       x = expression(paste("Pctl Mean Annual Solar Insolation (kW/m",""^2," per day)")),
+       y = "Pctl Mean Annual Wind Speed \n at Height 50m (mph)") +
+  theme_ds2()
+
+## Map plot of Renewable Energy Portfolio Standards (RPS)
+fill_colors <- c("No" = blues_set5[5], "Voluntary" = blues_set5[3], "Yes" = blues_set5[2])
+
+ggplot(data = finalDat, aes(map_id = stateName)) +
+  geom_map(aes(fill = rps2015), color = "darkgrey", map = fifty_states) + 
+  map_plot_defaults +
+  scale_fill_manual(values = fill_colors) +
+  labs(title = expression(paste("2015 Renewable Portfolio Standards (RPS) by State")), 
+                                x = "", y = "")
+
+rm(dat, fill_colors, nasaPlots)
+```
+
+```{r}
+# Annual behavior of monthly means for solar insolation and wind speed at 50m
+usInsolWind <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/us_1to8926.csv")
+
+# Grouping by State and Variable and Summarizing
+library(dplyr)
+library(tidyr)
+
+# Note: Need to filter out one entry for Ontario (very close to int'l boundary)
+# And DC (not in the scope of the analysis)
+
+usInsol <- usInsolWind %>% 
+  select(-X, -LAT, -LON, -COUNTRY, -LOC, -PAIR) %>%
+  filter(PARAMETER == "ALLSKY_SFC_SW_DWN" & STATE != "ON" & STATE != "DC") %>% 
+  rename(state = STATE) %>%
+  group_by(state) %>%
+  summarize(Jan = mean(JAN), Feb = mean(FEB), Mar = mean(MAR),
+            Apr = mean(APR), May = mean(MAY), Jun = mean(JUN),
+            Jul = mean(JUL), Aug = mean(AUG), Sep = mean(SEP),
+            Oct = mean(OCT), Nov = mean(NOV), Dec = mean(DEC)) %>%
+  gather(key = month, value = meanInsol, -state) %>%
+  mutate(month = match(month, month.abb))
+
+# Note: some states seem to not align with the rest for mean_insol trending;
+# The below code extracts these (HI is the "_max" and AK is the "_min" for each pair) 
+
+usInsolWinterMin <- usInsol %>% 
+  filter(month == 1) %>% arrange(meanInsol) %>% head(n=1)
+
+usInsolWinterMax <- usInsol %>% 
+  filter(month == 1) %>% arrange(meanInsol) %>% tail(n=1)
+
+usInsolFallMin <- usInsol %>% 
+  filter(month == 10) %>% arrange(meanInsol) %>% head(n=1)
+
+usInsolFallMax <- usInsol %>% 
+  filter(month == 10) %>% arrange(meanInsol) %>% tail(n=1)
+  
+
+usWs50m <- usInsolWind %>% 
+  select(-X, -LAT, -LON, -COUNTRY, -LOC, -PAIR) %>%
+  filter(PARAMETER == "WS50M" & STATE != "ON" & STATE != "DC") %>% 
+  rename(state = STATE) %>%
+  group_by(state) %>%
+  summarize(Jan = mean(JAN), Feb = mean(FEB), Mar = mean(MAR),
+            Apr = mean(APR), May = mean(MAY), Jun = mean(JUN),
+            Jul = mean(JUL), Aug = mean(AUG), Sep = mean(SEP),
+            Oct = mean(OCT), Nov = mean(NOV), Dec = mean(DEC)) %>%
+  gather(key = month, value = meanWs50m, -state) %>%
+  mutate(month = match(month, month.abb))
+
+ggplot(data = usInsol, aes(x = month, y = meanInsol)) +
+  geom_line(aes(col = state), alpha = 0.6) +
+  geom_text(data = usInsolWinterMax, 
+            aes(x = month, y = meanInsol, label = state)) +
+  geom_text(data = usInsolWinterMin, 
+            aes(x = month, y = meanInsol, label = state)) +
+  labs(title = "Trend in Mean Solar Insolation \n Across the Year Among States",
+       x = "Month", 
+       y = expression(paste("Mean Solar Insolation (kW/m",""^2," per day)")),
+       caption = "HI and AK are the high and low outliers, respectively, across fall and winter") +
+  scale_color_discrete(guide = FALSE) +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  theme_ds2()
+
+ggplot(data = usWs50m, aes(x = month, y = meanWs50m)) +
+  geom_line(aes(col = state), alpha = 0.6) +
+  labs(title = "Trend in Mean Wind Speed at Height 50m \n Across the Year Among States",
+       x = "Month", 
+       y = "Mean Wind Speed \n at Height 50m (mph)") +
+  scale_color_discrete(guide = FALSE) +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  theme_ds2()
+
+#rm(usInsolWind, usInsol, usInsolFallMax, usInsolFallMin, 
+#   usInsolWinterMax, usInsolWinterMin, usWs50m)
+```
+
+### Removing some variables from FinalDat based on exploratory analyses
+```{r}
+## Removing the following vars as not connecting strongly to any underlying theory about energy consumption: 
+### gdpPctGov, gdpPctHosp, gdpPctUtil, and gdpPctOth
+## Keeping "HS or Less" and "Bachelor's or More" variables and removing the following:
+### eduPctLTHS, eduPctHS, eduPctBac, eduPctGradProf, eduPctSmColAssoc
+## Removing house2014PctDem (pres2016PctDem covers political metrics) and stateName (state covers this)
+## Removing gthrmECons (miniscule values for all but California and to a lesser extent Nevada)
+library(dplyr)
+
+finalDatV2 <- finalDat %>%
+  select(-c(gdpPctGovt, gdpPctHosp, gdpPctUtil, gdpPctOth,
+            eduPctLTHS, eduPctHS, eduPctBac, eduPctGradProf, eduPctSmColAssoc,
+            house2014PctDem, stateName, gthrmECons))
+
+# Save the resulting finalDat dataset for model-building
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+write.csv(finalDatV2, file = "finalDatV2.csv", row.names = FALSE)
+```
+
+### Correlation Plot among all continuous numeric variables in final dataset
+```{r, warning = FALSE}
+library(dplyr)
+library(corrplot)
+
+# Determine only numeric variables in dataset
+varTypes <- sapply(finalDat, class)
+
+numericVars <- names(which((varTypes == "numeric") | (varTypes == "integer")))
+
+numericDat <- finalDat %>% select(numericVars)
+
+# Create correlation plot among numeric variables
+scaleCols <- colorRampPalette(c(color_set6[1], "#FFFFFF", color_set6[6]))
+
+corrplot(cor(numericDat), method = "square", type = "upper", order = "AOE",
+         col = scaleCols(100), tl.col = "black", tl.cex = 0.8, cl.align.text = "l")
+
+rm(varTypes, numericVars, numericDat, scaleCols)
+```

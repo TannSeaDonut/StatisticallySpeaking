@@ -1,0 +1,852 @@
+---
+title: "MAT8406_Project_DP"
+author: "Duane Stanton"
+date: "March 9, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Processing Data Files
+
+## *Note: This code is a mishmash of camelCase and underscores - going forward will be camelCase!*
+#### *Note: setting 'eval = FALSE' for completed code chunks to avoid rework/overwrite*
+#### **Note: The initial datasets loaded were downloaded from cited sources in the proposal document**
+
+### Connecting Provided Lat & Long Data to Countries (for Filtering to USA) [done]
+```{r, eval = FALSE}
+# Reading in the data
+library(readxl)
+
+global <- read_excel("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/GlobalDat_TotInsolWnd50m.xlsx")
+```
+
+```{r, eval = FALSE}
+# Apply StackExchange-provided process to map Lat & Long coordinates to countries
+library(sp)
+library(rworldmap)
+library(rworldxtra)
+
+# The single argument to this function, points, is a data.frame in which:
+#   - column 1 contains the longitude in degrees
+#   - column 2 contains the latitude in degrees
+coords2country = function(coords)
+{  
+  #countriesSP <- getMap(resolution='low')
+  countriesSP <- getMap(resolution='high') #you could use high res map from 
+                            # rworldxtra if you were concerned about detail
+
+  # convert our list of points to a SpatialPoints object
+
+  #setting CRS directly to that from rworldmap
+  coordsSP = SpatialPoints(coords, proj4string=CRS(proj4string(countriesSP)))  
+
+ # use 'over' to get indices of the Polygons object containing each point 
+  indices = over(coordsSP, countriesSP)
+
+  # return the ADMIN names of each country
+  indices$ADMIN  
+  #indices$ISO3 # returns the ISO3 code 
+  #indices$continent   # returns the continent (6 continent model)
+  #indices$REGION   # returns the continent (7 continent model)
+}
+
+# Credit to StackOverflow user Andy for the above: https://stackoverflow.com/questions/14334970/convert-latitude-and-longitude-coordinates-to-country-name-in-r
+```
+
+```{r, eval = FALSE}
+# Apply coordinates --> country mapping to the global dataset, 
+# filtering to only coordinates in the United States
+library(dplyr)
+
+coords <- global %>% select(LON, LAT)
+
+global <- global %>% mutate(COUNTRY = coords2country(coords))
+
+us <- global %>% filter(COUNTRY == "United States of America")
+
+rm(coords, global)
+```
+
+```{r, eval = FALSE, echo = FALSE}
+# Add mapping of coordinates to States
+
+# !Note: only works for contiguous US, excludes AK and HI
+
+#library(sp)
+library(maps)
+library(maptools)
+library(rgeos)
+
+# State version
+
+# The single argument to this function, pointsDF, is a data.frame in which:
+#   - column 1 contains the longitude in degrees
+#   - column 2 contains the latitude in degrees
+
+latlong2state <- function(coordsDF) {
+    # Prepare SpatialPolygons object with one SpatialPolygon
+    # per county
+    states <- map('state', fill=TRUE, col="transparent", plot=FALSE)
+    IDs <- sapply(strsplit(states$names, ":"), function(x) x[1])
+    states_sp <- map2SpatialPolygons(states, IDs=IDs,
+                     proj4string=CRS("+proj=longlat +datum=wgs84"))
+
+    # Convert pointsDF to a SpatialPoints object 
+    coordsSP <- SpatialPoints(coordsDF, 
+                    proj4string=CRS("+proj=longlat +datum=wgs84"))
+
+    # Use 'over' to get _indices_ of the Polygons object containing each point 
+    indices <- over(coordsSP, states_sp)
+
+    # Return the county names of the Polygons object containing each point
+    stateNames <- sapply(states_sp@polygons, function(x) x@ID)
+    stateNames[indices]
+}
+
+# Credit to StackOverflow user Josh O'Brien for the above (state version): https://stackoverflow.com/questions/8751497/latitude-longitude-coordinates-to-state-code-in-r#8751965
+```
+
+```{r}
+library(dplyr)
+
+coords <- us %>% select(LON, LAT)
+us <- us %>% mutate(state = latlong2state(coords))
+
+# As noted before, HI and AK don't work with this method, so need to apply the
+# methods in the next code chunk - first saving missing 'state' obs to another dataset
+
+# Adding an index column to preserve current row order, then separating out 'state' = NA rows for next step
+us$index <- c(1:nrow(us))
+
+usMissing <- us %>% filter(is.na(state))
+usNotMissing <- us %>% na.omit()
+
+rm(coords)
+```
+
+```{r, eval = FALSE}
+#library(dplyr)
+library(ggmap)
+
+usMissingStates <- usMissing %>% select(LON,LAT)
+
+# Google Maps API limits a user to 2,500 queries per day,
+# so OK running this process on the 2,410 'state'-missing observations
+
+usMissingStates <- usMissingStates %>% 
+  mutate(LOC = lapply(1:nrow(usMissingStates), 
+                      function(i){revgeocode(as.numeric(usMissingStates[i,]),
+               output = c("address"),
+               messaging = FALSE,
+               sensor = FALSE,
+               override_limit = FALSE)
+               }))
+
+# Credit to StackOverflow user jlhoward for the above: https://stackoverflow.com/questions/22911642/applying-revgeocode-to-a-list-of-longitude-latitude-coordinates#22919546
+
+# To cite ggmap in publications, please use:
+#   D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL
+#   http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf
+```
+
+```{r, eval = FALSE}
+# For cases where one of the two variables' entries (same Lon/Lat values)
+# has been coded to a location but the other has not, assign the location
+# entry to the 'currently missing' case
+
+#library(dplyr)
+
+# Create PAIR to indicate which LON/LAT pairings align between the two parameters
+# Then subset by PARAMETER
+
+usMissing$LOC <- as.character(usMissingStates$LOC) # LOC is originally a list element
+
+usMissing <- usMissing %>% arrange(PARAMETER,index) %>% 
+  mutate(PAIR = rep(1:(nrow(usMissing)/2),2))
+  
+usMissingTotInsol <- usMissing %>% filter(PARAMETER == "ALLSKY_SFC_SW_DWN")
+
+usMissingWind50m <- usMissing %>% filter(PARAMETER == "WS50M")
+
+# Place the LOC entries of the one subset into the other subset for both
+# Then, if one entry in the LON/LAT-paired subsets has provided entry data
+# but not the other, assign the coded location data to the missing LOC
+
+usMissingTotInsol <- usMissingTotInsol %>% 
+  mutate(LOCoth = usMissingWind50m$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+usMissingWind50m <- usMissingWind50m %>% 
+  mutate(LOCoth = usMissingTotInsol$LOC, 
+         LOC = ifelse((LOC == "ist(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+# Recombine the subsets and save the file
+
+usMissing <- rbind(usMissingTotInsol, usMissingWind50m) %>%
+  arrange(PAIR, PARAMETER)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(usMissing, file = "usMissing.csv", row.names = FALSE)
+```
+
+**Note: between the prior and proceeding code chunks, I manually looked up and entered the state details for cases still missing 'address' information, and manually coded 'state' data based on the 'address' details; for example, if the Google Maps API lookup returned *123 Main St, Springfield, IL*, I coded the state as 'illinois' (format matches the previous code output that matched non-AK/HI coordinates to states)**
+
+```{r, message = FALSE, warning = FALSE}
+# Read back in the new-and-improved usMissing data file which now has no missing cases
+usMissingNoMore <- read.csv("usMissing.csv")
+
+#library(dplyr)
+library(stringi) 
+usMissingNoMore <- usMissingNoMore %>% select(-c(LOC, PAIR))
+
+us <- rbind(usNotMissing, usMissingNoMore) %>% 
+  arrange(index) %>% 
+  filter(state != "ontario") %>% # one observation is on the Ontario side of NY-ON border
+  mutate(state = 
+           state.abb[match(stri_trans_totitle(state),state.name)]) 
+  # convert to two-letter abbrev. to match other data
+```
+
+```{r}
+# Summarizing solar insolation and wind speed @ 50m by state
+# Note: Washington, D.C. does not have an observation,
+# So if needed take the average of the two closest observations for each value
+# Springfield, VA is about 15mi SW, and Upper Marlboro, MD is about 17mi SE
+# Currently NO D.C. entries have been added
+
+# Grouping by State and Variable and Summarizing
+#library(dplyr)
+
+usInsol <- us %>% 
+  select(-LAT, -LON, -COUNTRY, -index) %>%
+  filter(PARAMETER == "ALLSKY_SFC_SW_DWN") %>% 
+  group_by(state) %>%
+  summarize(janMean = mean(JAN), febMean = mean(FEB), marMean = mean(MAR),
+            aprMean = mean(APR), mayMean = mean(MAY), junMean = mean(JUN),
+            julMean = mean(JUL), augMean = mean(AUG), sepMean = mean(SEP),
+            octMean = mean(OCT), novMean = mean(NOV), decMean = mean(DEC),
+            annMeanInsol = mean(ANN), n = n())
+
+usInsolAnn <- usInsol %>% select(state, annMeanInsol)
+
+usWind <- us %>% 
+  select(-LAT, -LON, -COUNTRY, -index) %>%
+  filter(PARAMETER == "WS50M") %>% 
+  group_by(state) %>%
+  summarize(janMean = mean(JAN), febMean = mean(FEB), marMean = mean(MAR),
+            aprMean = mean(APR), mayMean = mean(MAY), junMean = mean(JUN),
+            julMean = mean(JUL), augMean = mean(AUG), sepMean = mean(SEP),
+            octMean = mean(OCT), novMean = mean(NOV), decMean = mean(DEC),
+            annMeanWs50m = mean(ANN), n = n())
+
+usWindAnn <- usWind %>% select(state, annMeanWs50m)
+
+usInsolWind <- left_join(usInsolAnn, usWindAnn, by = "state")
+```
+
+```{r, eval = FALSE}
+# Save us_insolwind data file for ongoing work
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(usInsolWind, file = "xusInsolWind.csv", row.names = FALSE)
+```
+
+THIS AND NEXT SEVERAL CHUNKS OF CODE IS THE OLD VERSION OF PROCESSING THE LAT/LONG COORDINATES TO STATES
+```{r, eval = FALSE}
+#library(dplyr)
+library(ggmap)
+
+us_points <- us %>% select(LON,LAT)
+
+# Google Maps API limits a user to 2500 queries per day, so need to apply the 
+# below to subsets of the dataset across multiple days
+
+# Run day 1 (March 9, 2018)
+
+us_1to2500 <- us[1:2500,] %>% mutate(LOC = lapply(1:nrow(us_points[1:2500,]), 
+                                     function(i){revgeocode(as.numeric(us_points[i,]),
+               output = c("address"),
+               messaging = FALSE,
+               sensor = FALSE,
+               override_limit = FALSE)
+               }))
+
+# Credit to StackOverflow user jlhoward for the above: https://stackoverflow.com/questions/22911642/applying-revgeocode-to-a-list-of-longitude-latitude-coordinates#22919546
+
+# To cite ggmap in publications, please use:
+#   D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL
+#   http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf
+```
+
+```{r, eval = FALSE}
+# Save us and us_1to2500 data files for ongoing work
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+us_1to2500$LOC <- as.character(us_1to2500$LOC)
+
+write.csv(us, file = "USDat_TotInsolWnd50m.csv")
+write.csv(us_1to2500, file = "us_1to2500.csv")
+```
+
+```{r, eval = FALSE}
+# For cases where one of the two variables' entries (same Lon/Lat values)
+# has been coded to a location but the other has not, assign the location
+# entry to the 'currently missing' case
+
+us_1to2500 <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/us_1to2500.csv", stringsAsFactors = FALSE)
+
+library(dplyr)
+
+# Create PAIR to indicate which LON/LAT pairings align between the two parameters
+# Then subset by PARAMETER
+
+us_1to2500 <- us_1to2500 %>% arrange(PARAMETER,X) %>% 
+  mutate(PAIR = rep(1:(nrow(us_1to2500)/2),2))
+  
+us_1to2500_totinsol <- us_1to2500 %>% filter(PARAMETER == "ALLSKY_SFC_SW_DWN")
+
+us_1to2500_wnd50m <- us_1to2500 %>% filter(PARAMETER == "WS50M")
+
+# Place the LOC entries of the once subset into the other subset for both
+# Then, if one entry in the LON/LAT-paired subsets has provided entry data
+# but not the other, assign the coded location data to the missing LOC
+
+us_1to2500_totinsol <- us_1to2500_totinsol %>% 
+  mutate(LOCoth = us_1to2500_wnd50m$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "ist(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+us_1to2500_wnd50m <- us_1to2500_wnd50m %>% 
+  mutate(LOCoth = us_1to2500_totinsol$LOC, 
+         LOC = ifelse((LOC == "ist(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+# Recombine the subsets and save the file
+
+us_1to2500 <- rbind(us_1to2500_totinsol, us_1to2500_wnd50m) %>%
+  arrange(PAIR, PARAMETER)
+
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(us_1to2500, file = "us_1to2500.csv")
+```
+
+```{r, eval = FALSE}
+# Run day 2 (March 11, 2018)
+library(dplyr)
+library(ggmap)
+
+us <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/USDat_TotInsolWnd50m.csv", stringsAsFactors = FALSE)
+
+us_points <- us[2501:5000,] %>% select(LON,LAT)
+
+us_2501to5000 <- us[2501:5000,] %>% mutate(LOC = lapply(1:nrow(us_points[2501:5000,]), 
+                                     function(i){revgeocode(as.numeric(us_points[i,]),
+               output = c("address"),
+               messaging = FALSE,
+               sensor = FALSE,
+               override_limit = FALSE)
+               }))
+```
+
+```{r, eval = FALSE}
+us_2501to5000$LOC <- as.character(us_2501to5000$LOC)
+
+# Create PAIR to indicate which LON/LAT pairings align between the two parameters
+# Then subset by PARAMETER
+
+us_2501to5000 <- us_2501to5000 %>% arrange(PARAMETER,X) %>% 
+  mutate(PAIR = rep(1:(nrow(us_2501to5000)/2),2))
+  
+us_2501to5000_totinsol <- us_2501to5000 %>% filter(PARAMETER == "ALLSKY_SFC_SW_DWN")
+
+us_2501to5000_wnd50m <- us_2501to5000 %>% filter(PARAMETER == "WS50M")
+
+# Place the LOC entries of the once subset into the other subset for both
+# Then, if one entry in the LON/LAT-paired subsets has provided entry data
+# but not the other, assign the coded location data to the missing LOC
+
+us_2501to5000_totinsol <- us_2501to5000_totinsol %>% 
+  mutate(LOCoth = us_2501to5000_wnd50m$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+us_2501to5000_wnd50m <- us_2501to5000_wnd50m %>% 
+  mutate(LOCoth = us_2501to5000_totinsol$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+# Recombine the subsets and save the file
+
+us_2501to5000 <- rbind(us_2501to5000_totinsol, us_2501to5000_wnd50m) %>%
+  arrange(PAIR, PARAMETER)
+
+# Save us_2501to5000 data file for ongoing work
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(us_2501to5000, file = "us_2501to5000.csv")
+```
+
+```{r, eval = FALSE}
+# Run day 3 (March 12, 2018)
+library(dplyr)
+library(ggmap)
+
+us <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/USDat_TotInsolWnd50m.csv", stringsAsFactors = FALSE)
+
+us_points <- us[5001:7500,] %>% select(LON,LAT)
+
+us_5001to7500 <- us[5001:7500,] %>% mutate(LOC = lapply(1:nrow(us_points[5001:7500,]), 
+                                     function(i){revgeocode(as.numeric(us_points[i,]),
+               output = c("address"),
+               messaging = FALSE,
+               sensor = FALSE,
+               override_limit = FALSE)
+               }))
+
+```
+
+```{r, eval = FALSE}
+us_5001to7500$LOC <- as.character(us_5001to7500$LOC)
+
+# Create PAIR to indicate which LON/LAT pairings align between the two parameters
+# Then subset by PARAMETER
+
+us_5001to7500 <- us_5001to7500 %>% arrange(PARAMETER,X) %>% 
+  mutate(PAIR = rep(1:(nrow(us_5001to7500)/2),2))
+  
+us_5001to7500_totinsol <- us_5001to7500 %>% filter(PARAMETER == "ALLSKY_SFC_SW_DWN")
+
+us_5001to7500_wnd50m <- us_5001to7500 %>% filter(PARAMETER == "WS50M")
+
+# Place the LOC entries of the once subset into the other subset for both
+# Then, if one entry in the LON/LAT-paired subsets has provided entry data
+# but not the other, assign the coded location data to the missing LOC
+
+us_5001to7500_totinsol <- us_5001to7500_totinsol %>% 
+  mutate(LOCoth = us_5001to7500_wnd50m$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+us_5001to7500_wnd50m <- us_5001to7500_wnd50m %>% 
+  mutate(LOCoth = us_5001to7500_totinsol$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+# Recombine the subsets and save the file
+
+us_5001to7500 <- rbind(us_5001to7500_totinsol, us_5001to7500_wnd50m) %>%
+  arrange(PAIR, PARAMETER)
+
+# Save us_5001to7500 data file for ongoing work
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(us_5001to7500, file = "us_5001to7500.csv")
+```
+
+```{r, eval = FALSE}
+# Run day 4 (March 14, 2018)
+library(dplyr)
+library(ggmap)
+
+us <- read.csv("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/USDat_TotInsolWnd50m.csv", stringsAsFactors = FALSE)
+
+us_points <- us[7501:8926,] %>% select(LON,LAT)
+
+us_7501to8926 <- us[7501:8926,] %>% mutate(LOC = lapply(1:nrow(us_points[7501:8926,]), 
+                                     function(i){revgeocode(as.numeric(us_points[i,]),
+               output = c("address"),
+               messaging = FALSE,
+               sensor = FALSE,
+               override_limit = FALSE)
+               }))
+
+```
+
+```{r, eval = FALSE}
+us_7501to8926$LOC <- as.character(us_7501to8926$LOC)
+
+# Create PAIR to indicate which LON/LAT pairings align between the two parameters
+# Then subset by PARAMETER
+
+us_7501to8926 <- us_7501to8926 %>% arrange(PARAMETER,X) %>% 
+  mutate(PAIR = rep(1:(nrow(us_7501to8926)/2),2))
+  
+us_7501to8926_totinsol <- us_7501to8926 %>% filter(PARAMETER == "ALLSKY_SFC_SW_DWN")
+
+us_7501to8926_wnd50m <- us_7501to8926 %>% filter(PARAMETER == "WS50M")
+
+# Place the LOC entries of the once subset into the other subset for both
+# Then, if one entry in the LON/LAT-paired subsets has provided entry data
+# but not the other, assign the coded location data to the missing LOC
+
+us_7501to8926_totinsol <- us_7501to8926_totinsol %>% 
+  mutate(LOCoth = us_7501to8926_wnd50m$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+us_7501to8926_wnd50m <- us_7501to8926_wnd50m %>% 
+  mutate(LOCoth = us_7501to8926_totinsol$LOC, 
+         LOC = ifelse((LOC == "list(address = NA)" & 
+                         LOCoth != "list(address = NA)"), LOCoth,LOC)) %>%
+  select(-LOCoth)
+
+# Recombine the subsets and save the file
+
+us_7501to8926 <- rbind(us_7501to8926_totinsol, us_7501to8926_wnd50m) %>%
+  arrange(PAIR, PARAMETER)
+
+# Save us_7501to8926 data file for ongoing work
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+write.csv(us_7501to8926, file = "us_7501to8926.csv")
+```
+
+### Processing Energy Resource Data [done]
+
+```{r, eval = FALSE}
+# Loading the data file
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+energy2015 <- read.csv("Complete_SEDS_update_2015.csv")
+
+# Retain only variables of interest:
+# CONSUMPTION
+
+# Note: Geotherm/Hydro/Solar/Wind/Nuclear appear to be treated as both 
+# **consumption** and production in EIA tables C1 and P2 for 2015 by state tables
+# Therefore for Renewables and Nuclear, only evaluating from Consumption vars
+# except for calculating Total Consumption/Production
+
+# Renewable Energy (RE) consumption=production: Sum of the following:
+#  Geothermal consumption: GETCB 
+#  Hydropower consumption: HYTCB
+#  Solar consumption: SOTCB
+#  Wind consumption: WYTCB
+
+# Biomass total consumption: BMTCB
+#  Sub-components: EMLCB, EMTCB, WWTCB
+
+# Nuclear consumption: NUETB
+
+# Coal consumption: CLTCB
+# Natural Gas consumption: NGTCB minus the following:
+# Supplemental gaseous fuels: SFTCB
+# Petroleum consumption: PMTCB
+
+# PRODUCTION 
+
+# Biomass production: 
+#  Biomass inputs for the production of fuel ethanol: EMFDB plus the following:
+#   Wood and waste total consumed : WWTCB
+# Geothermal production=consumption: GETCB 
+# Hydropower production=consumption: HYTCB
+# Solar production=consumption: SOTCB
+# Wind production=consumption: WYTCB
+# Nuclear production=consumption: NUETB
+# Coal production: CLPRB
+# NatGas production: NGMPB
+# Crude Oil production: PAPRB
+
+# State population in thousands: TPOPP
+
+keeplistEnergy2015 <- c("BMTCB", "CLTCB", "NGTCB", "PMTCB", "EMFDB", 
+                          "GETCB", "HYTCB", "SOTCB", "WYTCB", "NUETB", "CLPRB", 
+                          "NGMPB", "PAPRB","ELISB", "SFTCB", "WWTCB", "TPOPP")
+
+# Converting metrics from Billion BTUs to Trillion BTUs, filtering out the US (total US) entries
+
+library(dplyr)
+library(tidyr)
+
+energy2015 <- energy2015 %>% filter(MSN %in% keeplistEnergy2015) %>%
+  mutate(state = StateCode) %>% select(state, MSN, Data) %>%
+  spread(key = MSN, value = Data) %>% 
+  mutate(gthrmECons = GETCB/1000, 
+         hydroECons = HYTCB/1000, 
+         solarECons = SOTCB/1000,
+         windECons = WYTCB/1000, 
+         rETotCons = gthrmECons + hydroECons + solarECons + windECons,
+         biomassECons = BMTCB/1000,
+         nclrECons = NUETB/1000,
+         coalECons = CLTCB/1000, 
+         natGasECons = (NGTCB - SFTCB)/1000,
+         petroECons = PMTCB/1000,
+         ffETotCons = coalECons + natGasECons + petroECons,
+         biomassEProd = (EMFDB + WWTCB)/1000,
+         coalEProd = CLPRB/1000,
+         natGasEProd = NGMPB/1000, 
+         petroEProd = PAPRB/1000, 
+         ffETotProd = coalEProd + natGasEProd + petroEProd,
+         totECons = rETotCons + biomassECons + nclrECons + ffETotCons,
+         totEProd = rETotCons + biomassEProd + nclrECons + ffETotProd,
+         eConsIndex = (rETotCons - ffETotCons)*100/totECons,
+         eConsPctRE = rETotCons*100/totECons,
+         eConsPctFF = ffETotCons*100/totECons,
+         netEBalance = totEProd - totECons,
+         statePopK = TPOPP) %>%
+ 
+  select(state, gthrmECons, hydroECons, solarECons,windECons, rETotCons, 
+         biomassECons, nclrECons, coalECons, natGasECons, petroECons, ffETotCons, 
+         biomassEProd, coalEProd, natGasEProd, petroEProd, ffETotProd, 
+         totECons, totEProd, eConsIndex, eConsPctRE, eConsPctFF, netEBalance, statePopK) %>% 
+  filter(state != "US")
+
+# Save data file
+
+write.csv(energy2015, file = "xenergy2015.csv", row.names = FALSE)
+```
+
+### Processing State GDP by Industry Data [done]
+
+```{r, warning = FALSE, eval = FALSE}
+## State GDP by Industry
+
+# Loading the data file - first two rows are header details,
+# and inputting the variable names to conform to R standards
+# (no vars starting with numbers, no colons in the var name)
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+library(readxl)
+stateGDPInd2015 <- read_excel("BEA_2015_byInd_StateGDP.xls", skip = 3,
+                               col_names = c("Fips", "Area", "IndCode",
+                                             "Industry", "Q1_2015", "Q2_2015",
+                                             "Q3_2015", "Q4_2015"),
+                               col_types = c("text", "text", "text", "text",
+                               "numeric", "numeric", "numeric", "numeric"))
+
+# Processing the datasheet to "wide data" format, 
+# and calculating percentage of state GDP by select industry groupings
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+library(dplyr)
+library(stringr)
+library(tidyr)
+
+# Note: Need to AVERAGE quarterly estimates to match 2015 annual results
+
+# Note: For Delaware 'Agriculture, forestry, fishing, and hunting' and 
+# 'Mining, quarrying, and oil and gas extraction' data are not disclosed, 
+# and likewise for Rhode Island (same two categories)
+# "in order to avoid the disclosure of confidential information" (per BEA file);
+# because the data ARE included in the 'All industry total' category for the two
+# states but exact quantities cannot be determined, the missing data for each state 
+# is allocated equally among the two categories for the purposes of the analysis
+
+stateGDPInd2015 <- stateGDPInd2015 %>% 
+  mutate(state = state.abb[match(Area,state.name)],
+         state = if_else((is.na(state) & Area == "District of Columbia"),"DC",state),
+         tot2015 = (Q1_2015 + Q2_2015 + Q3_2015 + Q4_2015) / 4,
+         tot2015 = if_else(is.na(tot2015), 0, tot2015)) %>%
+  select(state, Industry, tot2015) %>%
+  mutate(Industry = str_remove_all(Industry, " ")) %>%
+  mutate(Industry = str_remove_all(Industry, ",")) %>%
+  select(state, Industry, tot2015) %>%
+  spread(key = Industry, value = tot2015) %>%
+  mutate(Agricultureforestryfishingandhunting = 
+           if_else(state == "DE",1943/2, 
+                   if_else(state == "RI", 665/2,
+                           Agricultureforestryfishingandhunting)),
+         Mining = 
+           if_else(state == "DE",1943/2, 
+                   if_else(state == "RI", 665/2,
+                           Mining)),
+         gdpBusProfSvc = Information + Financeandinsurance + 
+           Realestateandrentalandleasing + 
+           Professionalscientificandtechnicalservices + 
+           Managementofcompaniesandenterprises + 
+           Administrativeandwastemanagementservices,
+         gdpGovt = Government,
+         gdpHosp = Accommodationandfoodservices,
+        gdpManuf = Manufacturing,
+         gdpMining = Mining,
+         gdpUtil = Utilities,
+         gdpOth = Artsentertainmentandrecreation + 
+           Agricultureforestryfishingandhunting +
+           Construction + 
+           Educationalservices +
+          Healthcareandsocialassistance +
+           Retailtrade +
+           Transportationandwarehousing +
+           Wholesaletrade +
+           Otherservicesexceptgovernment,
+         gdpTotMn = gdpBusProfSvc + gdpGovt + gdpHosp + gdpManuf + gdpMining + 
+           gdpUtil + gdpOth,
+         gdpPctBusProfSvc = gdpBusProfSvc*100 / gdpTotMn,
+         gdpPctGovt = gdpGovt*100 / gdpTotMn,
+         gdpPctHosp = gdpHosp*100 / gdpTotMn,
+         gdpPctManuf = gdpManuf*100 / gdpTotMn,
+         gdpPctMining = gdpMining*100 / gdpTotMn,
+         gdpPctUtil = gdpUtil*100 / gdpTotMn,
+         gdpPctOth = gdpOth*100 / gdpTotMn) %>%
+  select(state, gdpTotMn, gdpPctBusProfSvc, gdpPctGovt, gdpPctHosp, gdpPctManuf,
+         gdpPctMining, gdpPctUtil, gdpPctOth)
+
+## State GDP per capita
+
+# Loading the data file - first five rows are header details, and sixth (header)
+# row has a variable name that is numeric, last four rows are table notes
+
+#library(readxl)
+stateGDPPerCap2015 <- read_excel("BEA_2015_PerCap_StateGDP.xls", skip = 6, 
+                              n_max = 51, col_name = c("FIPS", "Area", "X2015"),
+                              col_types = c("text", "text", "numeric"))
+
+# Processing the data to "wide data" format
+
+#library(dplyr)
+#library(tidyr)
+
+stateGDPPerCap2015 <- stateGDPPerCap2015 %>% 
+  mutate(state = state.abb[match(Area,state.name)],
+         state = if_else((is.na(state) & Area == "District of Columbia"),"DC",state),
+         gdpPerCapK = X2015 / 1000) %>%
+  select(state, gdpPerCapK)
+
+## Joining State GDP by Industry and State GDP per capita datasets
+stateGDP2015 <- left_join(stateGDPPerCap2015, stateGDPInd2015, by = "state")
+
+# Save data file
+
+write.csv(stateGDP2015, file = "xstateGDP2015.csv", row.names = FALSE)
+```
+
+### Processing Political Variables [done]
+
+```{r, eval = FALSE}
+## 2016 Presidential Election Votes
+
+# Loading the data file 
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+library(readxl)
+
+pres2016 <- read_excel("2016PresVotesByState.xlsx")
+
+# Calculate % Democratic party votes from Total
+
+library(dplyr)
+
+pres2016 <- pres2016 %>% mutate(state = State, 
+                                pres2016PctDem = Votes2016Dem*100 / Votes2016Tot) %>%
+  select(state, pres2016PctDem)
+
+## 2014 Congressional Election, Representative Composition
+
+# Loading the data file
+# Note: no independent or third party representatives were elected
+# Note: DC has a delegate who cannot vote on the House floor
+
+houseRep2014 <- read_excel("Counts 114th Congress.xlsx")
+
+houseRep2014 <- houseRep2014 %>% mutate(state = State, 
+                                        house2014Total = 
+                                          `Dem House 114th Congress` +
+                                          `Rep House 114th Congress`,
+                                        house2014PctDem = 
+                                          if_else(state == "District of Columbia", 0,
+                                          `Dem House 114th Congress`*100 / house2014Total)) %>%
+  select(state, house2014PctDem)
+
+## State Renewable Portfolio Standard (RPS) status
+library(stringr)
+
+stateRPS <- read_excel("StateRPS_status2015.xlsx") %>% 
+  mutate(state = State, rps2015 = `RPS Status 2015`) %>%
+  select(state, rps2015)
+
+## Joining the three tables by State 
+# and then modifying state names to postal abbreviated form
+library(purrr)
+#library(dplyr)
+
+poldat <- list(pres2016, houseRep2014, stateRPS)
+
+statePolDat <- reduce(poldat, left_join, by = "state") %>%
+  mutate(state = if_else(state == "District of Columbia","DC",
+         state.abb[match(state,state.name)]))
+
+## Save data file
+
+write.csv(statePolDat, file = "xstatePolDat.csv", row.names = FALSE)
+```
+
+### Processing Human Capital Factors [done]
+```{r, eval = FALSE}
+## Personal Income per capita, 2015
+
+# Loading the data file 
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+stateIncPerCap <- read.csv("PerCapIncState_ACS_2015_B19301.csv")
+
+## Processing the file to extract per capita personal income in 1,000 USD
+library(dplyr)
+
+stateIncPerCap <- stateIncPerCap %>% 
+  mutate(state = if_else(Geography == "District of Columbia","DC",
+                         state.abb[match(Geography,state.name)]),
+         persIncPerCapK = Estimate / 1000) %>%
+  select(state, persIncPerCapK)
+
+## Education Level among age 25+ population, 2015
+
+# Loading the data file
+stateEdu25Yrs <- read.csv("StateEdu&Povty25yrsplus_ACS_2015_S1501.csv")
+
+# Creating summary percentage variables by education level
+
+stateEdu25Yrs <- stateEdu25Yrs %>% 
+  mutate(state = if_else(Geography == "District of Columbia","DC",
+                         state.abb[match(Geography,state.name)]), 
+         eduPctLTHS = Edu.LT.9th.pct + Edu.9th12th.pct,
+         eduPctHS = Edu.HSgrad.pct,
+         eduPctSmColAssoc = Edu.SmCollgNoDeg.pct + Edu.AssocDeg.pct,
+         eduPctBac = Edu.BachDeg.pct,
+         eduPctGradProf = Edu.GradProfDeg.pct) %>%
+  select(state, eduPctLTHS, eduPctHS, eduPctSmColAssoc, eduPctBac, eduPctGradProf)
+
+# Combining the two files and saving
+
+persIncomeEduPct <- left_join(stateIncPerCap, stateEdu25Yrs, by = "state")
+
+write.csv(persIncomeEduPct, file = "xpersIncomeEduPct.csv", row.names = FALSE)
+```
+
+### Combining the final data subsets into a final datafile
+```{r, eval = FALSE}
+# Set the working directory and read in the individual data subsets
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+energy2015 <- read.csv("xenergy2015.csv")
+stateGDP2015 <- read.csv("xstateGDP2015.csv")
+statePolDat <- read.csv("xstatePolDat.csv")
+persIncEduPct <- read.csv("xpersIncomeEduPct.csv")
+usInsolWind <- read.csv("xusInsolWind.csv")
+
+# Remove the index variable "X" from each data subset, then merge by State
+library(purrr)
+library(dplyr)
+
+datSubsets <- list(energy2015, stateGDP2015, statePolDat, persIncEduPct, usInsolWind)
+
+finalDat <- reduce(datSubsets, left_join, by = "state") %>% filter(state != "DC")
+
+write.csv(finalDat, file = "finalDat.csv", row.names = FALSE)
+```

@@ -1,0 +1,811 @@
+---
+params:
+  d: !r Sys.Date()
+output: pdf_document
+---
+---
+title: "MAT8406_Project_Model Building and Diagnostics"
+author: "Duane Stanton"
+date: `r params$d`
+---
+
+**NEED TO CONSIDER EACH OF THE BELOW**  
+
+1. Exploration of an interaction effect [done below]
+
+2. Variable selection through stepwise selection procedure [done below]
+
+3. Partial Regression Plots [done below]
+
+4. Box-Cox calculation for transforming Y [done below]
+
+5. Exploration of polynomial regression (for at least one independent variable) [done below]
+
+6. Calculation of influential observation measures [apply to final model]
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+options(show.signif.stars = FALSE)
+```
+
+```{r}
+# Load ggplot2 theme & color templates
+theme_ds2 <- function(base_size = 14){
+  theme_bw(base_size = base_size) %+replace%
+    theme(
+      #line = element_line(color = "#000000"),
+      #text = element_text(color = "#000000"),
+      axis.title = element_text(color = "#000000", face = "plain"),
+      axis.text = element_text(color="#000000", size = 13),
+      axis.line = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      #axis.line.y = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      legend.key = element_rect(color="#D2E2F9", fill = "#FFFFFF", linetype = 0),
+      legend.title = element_text(size = 12, face = "plain"),
+      legend.title.align = 0.5,
+      legend.text = element_text(size = 12.5),
+      legend.background = element_rect(size = 0.1, color = "#A0A0A0", 
+                                       fill = NA, linetype = 1),
+      panel.grid = element_line(color = "#FFFFFF", linetype = 0),   
+      panel.border = element_rect(color = NA, fill = NA),
+      panel.background = element_rect(color = NA, fill = "#FFFFFF"),
+      #plot.title = element_text(color = "#000000"),
+      plot.background = element_rect(color = NA, fill = "#FFFFFF"),
+      plot.title = element_text(hjust = 0.5, face = "plain"),
+      plot.caption=element_text(size=11, hjust=1, face="italic", color="black")
+      #strip.text = element_text(size = 12),
+      #strip.background = element_rect(fill = NA)
+      )
+}
+
+color_set6 <- c("#00205B", "#13b5ea", "#CDB87D", "#EEB31B", "#894600", "#E27400")
+```
+
+```{r, message = FALSE}
+# Reading in the data - final output from EDA on finalDat
+setwd("C:/Users/Duane/Documents/Academic/Villanova/2. Spring 18/MAT 8406_Regression Methods/Project/")
+
+library(dplyr)
+finalDatV2 <- read.csv("finalDatV2.csv")
+
+# Workaround to resolve issues with conflicting dplyr and MASS 'select' functions
+select <- dplyr::select
+```
+
+## Model Building and Diagnostics
+
+### Quick preliminary notes on approach
+* For each model, I remove the following from the DV set:  
+    * Remove energy cons/production variables that went into the outcome variable (IV)
+    * Remove energy cons/production variables that have multicollinearity issues with the rest of the model
+        + Ideally keeping in `netEBalance`; if need be, removing an [energy source]ECons or _EProd variable
+        + If possible, taking out an [energy source]ECons variable before an _EProd variable *if* both types            are available for that [energy source]
+
+### Preliminary Model 1: Outcome variable is % RE Consumption minus % FF Consumption
+**This will be evaluated further if time allows, but Prelim Model #2 looks more promising**
+```{r, warning = FALSE, message = FALSE}
+# Preliminary analyses - full model summary, VIF, basic model diagnostics 
+# Dependent Variable: % Renewal Energy Consumption minus % Fossil Fuel Energy Consumption
+
+# I want to keep in netEBalance if possible, so removing petroECons 
+
+library(dplyr)
+prelimMod1Dat <- finalDatV2 %>% 
+  select(-c(rETotCons, ffETotCons, ffETotProd:totEProd, eConsPctRE, eConsPctFF))
+
+prelimMod1 <- lm(eConsIndex ~ . -state -petroECons -natGasECons, data = prelimMod1Dat)
+
+summary(prelimMod1)
+
+library(car)
+vif(prelimMod1)
+
+# High VIF values for: natGasECons, natGasEProd, netEBalance
+# Dropped natGasECons on second go 'round
+
+# Model Diagnostics
+library(ggplot2)
+library(ggfortify)
+
+autoplot(prelimMod1, which = c(1,2)) +
+  labs(caption = "prelimMod1") + 
+  theme_ds2()
+
+# Notes: OR (row 44) and WA (row 47) are potential outliers
+# Residuals plot shows model selection/variable transformation is clearly needed
+# if sticking with this model
+```
+
+```{r, results = 'hide'}
+#emptyMod1 <- lm(eConsIndex ~ 1, data = prelimMod1Dat)
+#fullMod1 <- lm(eConsIndex ~ . - state, data = prelimMod1Dat)
+
+#stepMod1 <- step(emptyMod1, scope = formula(fullMod1), direction = "both", trace = 0)
+#fwdMod1 <- step(emptyMod1, scope = formula(fullMod1), direction = "forward", trace = 0)
+#bwdMod1 <- step(fullMod1, direction = "backward", trace = 0)
+
+rm(prelimMod1Dat, prelimMod1)
+```
+
+```{r}
+#summary(stepMod1)
+#extractAIC(stepMod1)
+
+#summary(fwdMod1)
+#extractAIC(fwdMod1)
+
+#summary(bwdMod1)
+#extractAIC(bwdMod1)
+```
+
+```{r}
+#library(car)
+#avPlots(stepMod1, ask = FALSE, col = color_set6[1], pch = 16, col.lines = "blue", lwd = 1.5,
+#grid = FALSE)
+
+#avPlots(fwdMod1, ask = FALSE, col = color_set6[2], pch = 16, col.lines = "blue", lwd = 1.5,
+#grid = FALSE)
+
+#avPlots(bwdMod1, ask = FALSE, col = color_set6[3], pch = 16, col.lines = "blue", lwd = 1.5,
+#grid = FALSE)
+```
+
+
+### Preliminary Model 2: Outcome variable is % FF Consumption 
+**This will likely be used for the final model process**
+```{r, warning = FALSE, message = FALSE}
+# Preliminary analyses - full model summary, VIF, basicmodel diagnostics 
+# Dependent Variable: % Fossil Fuel Energy Consumption
+
+# I want to keep in netEBalance if possible, so removing petroECons 
+
+library(dplyr)
+prelimMod2Dat <- finalDatV2 %>% 
+  select(-c(rETotCons, ffETotCons, ffETotProd:eConsIndex, eConsPctRE))
+
+prelimMod2 <- lm(eConsPctFF ~ . -state -petroECons -natGasECons, data = prelimMod2Dat)
+
+summary(prelimMod2)
+
+library(car)
+vif(prelimMod2)
+
+# High VIF values for: natGasECons, natGasEProd, netEBalance (again)
+# Dropped natGasECons on second go 'round
+
+# Model Diagnostics
+library(ggplot2)
+library(ggfortify)
+
+autoplot(prelimMod2, which = c(1,2)) +
+  labs(caption = "prelimMod2") + 
+  theme_ds2()
+
+# Notes: MUCH better initial residual plots, and moderately improved adj. R^2
+# Need to trim the model a bit to address multicollinearity (see GVIF values)
+# RI (row 39) stands out in initial diagnostic plots
+
+rm(prelimMod2Dat, prelimMod2)
+```
+
+### Preliminary Model 3: Outcome variable is FF Consumption (volume) 
+** Not being considered for further analysis**
+```{r message = FALSE, warning=FALSE}
+# Preliminary analyses - full model summary, VIF, basicmodel diagnostics 
+# Dependent Variable: Fossil Fuel Energy Consumption (volume)
+
+# Removing coalECons, natGasECons, and petroECons (components of the IV)
+
+library(dplyr)
+prelimMod3Dat <- finalDatV2 %>% 
+  select(-c(rETotCons, coalECons:petroECons, ffETotProd:eConsIndex, eConsPctFF))
+
+prelimMod3 <- lm(ffETotCons ~ . -state, data = prelimMod3Dat)
+
+summary(prelimMod3)
+
+library(car)
+vif(prelimMod3)
+
+# High VIF values for: natGasECons, natGasEProd, netEBalance (again)
+# Dropped natGasECons on second go 'round
+
+# Model Diagnostics
+library(ggplot2)
+library(ggfortify)
+
+autoplot(prelimMod3, which = c(1,2)) +
+  labs(caption = "prelimMod3") + 
+  theme_ds2()
+
+# Notes: This model is unusable - essentially perfect correlation betw. the IV and:
+# biomassECons, biomassEProd, coalEProd, natGasEProd, petroEProd, netEBalance
+# for each of these, the coefficient estimate is -1
+
+rm(prelimMod3Dat, prelimMod3)
+```
+
+
+## Futher investigations into *Preliminary Model #2*, Outcome variable is % FF Consumption
+
+# -----CONSIDER RUNNING FULL DIAGNOSTIC SUITE ON FULL MODEL, THEN SELECTION AND RECHECKING------
+
+### Variable selection models and summaries (AIC selection criterion)
+```{r, results = 'hide'}
+# Creating the models
+#library(dplyr)
+prelimMod2Dat <- finalDatV2 %>% 
+  select(-c(rETotCons, ffETotCons, ffETotProd:eConsIndex, eConsPctRE, 
+            petroECons, natGasECons))
+
+emptyMod2 <- lm(eConsPctFF ~ 1, data = prelimMod2Dat)
+fullMod2 <- lm(eConsPctFF ~ . - state, data = prelimMod2Dat)
+
+stepMod2 <- step(emptyMod2, scope = formula(fullMod2), direction = "both", trace = 0)
+
+fwdMod2 <- step(emptyMod2, scope = formula(fullMod2), direction = "forward", trace = 0)
+
+bwdMod2 <- step(fullMod2, direction = "backward", trace = 0)
+
+# Comparison of stepwise, forward selection, and backward elimination models
+print("stepMod2")
+summary(stepMod2)
+extractAIC(stepMod2)
+
+print("fwdMod2")
+summary(fwdMod2)
+extractAIC(fwdMod2)
+
+print("bwdMod2")
+summary(bwdMod2)
+extractAIC(bwdMod2)
+```
+
+```{r}
+stepMod2 <- lm(eConsPctFF ~ hydroECons + gdpPctMining + nclrECons + 
+    coalECons + gdpPctBusProfSvc + biomassEProd + netEBalance + 
+    eduPctHSOrLess + annMeanInsol + gdpPerCapK, data = finalDatV2)
+```
+
+
+Each of the three models is slightly different, with the backward elimination model having both the highest $R^{2}_{adj}$ value and the highest AIC value among the three.
+
+
+** IGNORE THIS PART** 
+It may be of interest to note the independent variables retained in all three models:  
+
+* `hydroECons`  (negative coefficient in each model - greater consumption of hydroelectricity associated with lower % of energy consumption from fossil fuel energy)
+* `gdpPctMining` (positive coefficient in each model)
+* `nclrECons` (negative coefficient in each model)
+* `coalECons` (positive coefficient in each model)
+* `netEBalance` (negative coefficient in each model)
+
+Among these, three are directly related to energy consumption sources (`hydroECons`, `nclrECons`, and `coalECons`), with `gdpPctMining` associated with energy production by virtue of mining being the industry sector associated with resource extraction. `netEBalance` captures the difference between a state's total energy production and its towl energy consumption. In short, each of the consistently retained variables has a strong connection to energy production and/or consumption.
+**RESUME AFTER THIS**
+
+### Variable selection models and summaries ($R^{2}_{adj}$ selection criterion)
+```{r}
+# Model selection based on adjusted R-squared
+
+library(leaps)
+
+leapsMod <- regsubsets(eConsPctFF ~ . -state, data = prelimMod2Dat, nbest = 2, nvmax = 100)
+
+# Used plot(leapsMod, scale = "adjr2") to select the following models as the top 5 candidates)
+
+adjR2Mod1 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + coalEProd + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK, data = finalDatV2)
+
+adjR2Mod2 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + coalEProd + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK + annMeanInsol, data = finalDatV2)
+
+adjR2Mod3 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + coalEProd + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK + gdpPctManuf, data = finalDatV2)
+
+adjR2Mod4 <- lm(eConsPctFF ~ hydroECons + biomassECons + nclrECons + coalECons + coalEProd + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK, data = finalDatV2)
+
+adjR2Mod5 <- lm(eConsPctFF ~ hydroECons + biomassECons + nclrECons + coalECons + coalEProd + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK +annMeanInsol, data = finalDatV2)
+
+rm(leapsMod)
+
+# VIF check for each candidate model
+library(car)
+#vif(adjR2Mod1)  netEBalance = 12.2
+#vif(adjR2Mod2)  netEBalance = 12.2
+#vif(adjR2Mod3)  netEBalance = 13.2
+#vif(adjR2Mod4)  netEBalance = 12.1
+#vif(adjR2Mod5)  netEBalance = 12.2
+
+# Since each has problematic VIF results with netEBalance, 
+# I looked into just removing that variable, but it results in significantly lower adjusted R-squared values
+# Instead, I looked into removing another variable (checking one by one) from the top 5 candidate models,
+# then re-checked the adjusted R-squared (goal: highest) and VIF (goal: all <10) results
+# the following are the NEW top 5 candidate models:
+
+# Removing coalEProd from adjR2Mod1
+adjR2Mod1 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK, data = finalDatV2)
+
+print("adjR2Mod1")
+summary(adjR2Mod1)
+extractAIC(adjR2Mod1)
+
+# Removing coalEProd from adjR2Mod2
+adjR2Mod2 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK + annMeanInsol, data = finalDatV2)
+
+print("adjR2Mod2")
+summary(adjR2Mod2)
+extractAIC(adjR2Mod2)
+
+# Removing coalEProd from adjR2Mod3
+adjR2Mod3 <- lm(eConsPctFF ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK + gdpPctManuf, data = finalDatV2)
+
+print("adjR2Mod3")
+summary(adjR2Mod3)
+extractAIC(adjR2Mod3)
+
+# Removing coalEProd from adjR2Mod4
+adjR2Mod4 <- lm(eConsPctFF ~ hydroECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK, data = finalDatV2)
+
+print("adjR2Mod4")
+summary(adjR2Mod4)
+extractAIC(adjR2Mod4)
+
+# Removing coalEProd from adjR2Mod5
+
+adjR2Mod5 <- lm(eConsPctFF ~ hydroECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK +annMeanInsol, data = finalDatV2)
+
+print("adjR2Mod5")
+summary(adjR2Mod5)
+extractAIC(adjR2Mod5)
+```
+
+
+The `fwdMod2` and `bwdMod2` models (applying forward selection and backward elimination, respectively) were eliminated from further consideration in the multicollinearity check in the next section; for the remaining models, it's worth noting the remaining models have many independent variables in common, with very similar coefficient values: 
+
+```{r, message = FALSE}
+# Creating a summary table of model coefficients for candidate models
+library(dplyr)
+library(broom)
+library(reshape2)
+library(tidyr)
+
+# Organize candidate models and extract/organize model coefficients 
+
+modelsList <- list(stepMod2=stepMod2, adjR2Mod1=adjR2Mod1, adjR2Mod2=adjR2Mod2, adjR2Mod3=adjR2Mod3, adjR2Mod4=adjR2Mod4, adjR2Mod5=adjR2Mod5)
+
+coefSummary <- modelsList %>% 
+  lapply(tidy, .id = "model") %>%
+  melt() %>%
+  filter(variable == "estimate") %>%
+  select(term, value, L1) %>%
+  mutate(coefEst = round(value, 3)) %>%
+  select(L1, term, coefEst) %>%
+  spread(key = L1, value = coefEst)
+
+# Create an aesthetically solid table  
+library(knitr)
+library(kableExtra)
+
+kable(coefSummary, format = "html") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+```
+
+### Constant variance and Normal errors check for candidate models
+```{r}
+# Model Diagnostics for each candidate model
+library(ggplot2)
+library(ggfortify)
+
+autoplot(adjR2Mod1, which = c(1,2)) +
+  geom_point(col = color_set6[1]) +
+  labs(caption = "adjR2Mod1") +
+  theme_ds2()
+  
+autoplot(adjR2Mod2, which = c(1,2)) +
+  geom_point(col = color_set6[2]) +
+  labs(caption = "adjR2Mod2") +
+  theme_ds2()
+
+autoplot(adjR2Mod3, which = c(1,2)) +
+  geom_point(col = color_set6[3]) +
+  labs(caption = "adjR2Mod3") +
+  theme_ds2()
+
+autoplot(adjR2Mod4, which = c(1,2)) +
+  geom_point(col = color_set6[4]) +
+  labs(caption = "adjR2Mod4") +
+  theme_ds2()
+
+autoplot(adjR2Mod5, which = c(1,2)) +
+  geom_point(col = color_set6[5]) +
+  labs(caption = "adjR2Mod5") +
+  theme_ds2()
+
+autoplot(stepMod2, which = c(1,2)) +
+  geom_point(col = color_set6[6]) +
+  labs(caption = "stepMod2") +
+  theme_ds2()
+```
+
+For the most part the plots look similar (as would be expected given the similarity in composition of the models), but there are some differences: 
+
+* `adjR2Mod1`, `adjR2Mod3`, and `adjR2Mod4` have slightly more 'diamond-shaped' residual plot scatter (potentially an issue with observations towards the center), while `adjR2Mod2` and `adjR2Mod5` have slightly more 'box-shaped' scatter. All models other than `stepMod2` and perhaps `adjR2Mod2` have pronounced concentration of scatter for higher-value fitted observations.
+* `adjR2Mod1` and `adjR2Mod3` have good-looking Q-Q plots, while the other three `adjR2Mod[#]` models have distinct patterns in portions of their plotted points (e.g. around Theoretical Quantiles = -1 and  = 1), and `stepMod2` has highly pronounced skewness in the tails of its Q-Q Plot.
+
+All together, `adjR2Mod2` looks like the best candidate at this point. However, it may be possible to improve one or several of the models by transforming Y (Box-Cox) and/or some of the X variables.
+
+First, however, it will be useful to evaluate multicollinearity to determine if the list of candidate models can be reduced based on problematic Variance Inflation Factor (VIF) values for one or multiple model(s).
+
+#### Multicollinearity check
+```{r, message = FALSE}
+library(car)
+
+# Generate the VIF summaries
+adjR2Mod1VIF <- vif(adjR2Mod1)
+adjR2Mod2VIF <- vif(adjR2Mod2)
+adjR2Mod3VIF <- vif(adjR2Mod3)
+adjR2Mod4VIF <- vif(adjR2Mod4)
+adjR2Mod5VIF <- vif(adjR2Mod5)
+stepMod2VIF <- vif(stepMod2)
+fwdMod2VIF <- vif(fwdMod2)
+bwdMod2VIF <- vif(bwdMod2)
+
+# Create a VIF summary table with conditionnal formatting to call out problematic VIF values
+# Note: stepMod2, fwdMod2, and bwdMod2 VIF output if formatted differently - needed to work around this
+
+vifList <- list(adjR2Mod1=adjR2Mod1VIF, adjR2Mod2=adjR2Mod2VIF, adjR2Mod3=adjR2Mod3VIF, adjR2Mod4=adjR2Mod4VIF, adjR2Mod5=adjR2Mod5VIF, stepMod2=stepMod2VIF, fwdMod2=fwdMod2VIF, bwdMod2=bwdMod2VIF)
+
+options(max.print = 999999)
+
+vifSummary <- vifList %>% 
+  lapply(tidy) %>%
+  melt() %>%
+  filter((variable == "GVIF") | (L1 %in% c("stepMod2", "fwdMod2", "bwdMod2"))) %>%
+  mutate(variable = if_else(L1 %in% c("stepMod2", "fwdMod2", "bwdMod2"), names, .rownames)) %>%
+  select(variable, value, L1) %>%
+  mutate(vif = round(value, 2)) %>%
+  select(L1, variable, vif) %>%
+  mutate(vif = cell_spec(vif, format = "html", color = if_else(vif > 10, "red", "black"),
+                         bold = if_else(vif > 10, TRUE, FALSE))) %>%
+  spread(key = L1, value = vif) %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+vifSummary
+```
+
+As the above table shows, there are problematic VIF values for the `fwdMod2` and `bwdMod2` set. 
+Removing `gdpTotMn` from `fwdMod2` drops its $R^{2}_{adj}$ to 0.708 and raises its AIC to 195.1, both much poorer than the other models. Similarly, removing `netEBalance` from `bwdMod2` drops its $R^{2}_{adj}$ to 0.631 and raises its AIC to 206.2.
+**These two models are therefore removed from further consideration.**
+
+### Considering transformations on `eConsPctFF` (Y)
+```{r}
+library(MASS)
+
+boxcox(adjR2Mod1, lambda = seq(-2,5,0.5))
+boxcox(adjR2Mod2, lambda = seq(-2,5,0.5))
+boxcox(adjR2Mod3, lambda = seq(-2,5,0.5))
+boxcox(adjR2Mod4, lambda = seq(-2,5,0.5))
+boxcox(adjR2Mod5, lambda = seq(-2,5,0.5))
+boxcox(stepMod2, lambda = seq(-2,5,0.5))
+```
+
+Interestingly, other than `adjR2Mod3`, each of the `adjR2Mod[#]` models and `stepMod2` have 95% confidence intervals centered on a 'suggested' \lambda value between 2 (quadratic transform) and 3 (cubic tranform), though 1 (no transformation) is also included (again, except for `adjR2Mod3`).
+
+Therefore, for each candidate model, a quadratic transform of `eConsPctFF` will be considered and in terms of residual plots, Q-Q plots, VIF values, and partial regression ('added variable') plots. Along the way, some models may be discarded from furher consideration if they are deemed to be significantly inferior to other candidate models.
+
+After considering each of the still-considered candidate models with transformed and non-transformed Y, a final model will be selected for further work.
+
+```{r}
+# Creating a quadratic-transform version of eConsPctFF
+#library(dplyr)
+
+finalDatV2 <- finalDatV2 %>%
+  mutate(eConsPctFF2 = eConsPctFF^2)
+
+# Creating candidate models using the quadratic-transformed Y
+adjR2Mod1Y2 <- update(adjR2Mod1, -eConsPctFF +eConsPctFF2 ~ .)
+
+adjR2Mod2Y2 <- update(adjR2Mod2, -eConsPctFF +eConsPctFF2 ~ .)
+
+adjR2Mod3Y2 <- update(adjR2Mod3, -eConsPctFF +eConsPctFF2 ~ .)
+
+adjR2Mod4Y2 <- update(adjR2Mod4, -eConsPctFF +eConsPctFF2 ~ .)
+
+adjR2Mod5Y2 <- update(adjR2Mod5, -eConsPctFF +eConsPctFF2 ~ .)
+
+stepMod2Y2 <- lm(eConsPctFF2 ~ hydroECons + gdpPctMining + nclrECons + 
+    coalECons + gdpPctBusProfSvc + biomassEProd + netEBalance + 
+    eduPctHSOrLess + annMeanInsol + gdpPerCapK, data = finalDatV2)
+
+# Evaluating residual plots and Q-Q plots for the non-transformed Y and quadratic-transformed Y models
+#library(ggplot2)
+#library(ggfortify)
+
+autoplot(adjR2Mod1, which = c(1,2)) +
+  geom_point(col = color_set6[1]) +
+  labs(caption = "adjR2Mod1") +
+  theme_ds2()
+
+autoplot(adjR2Mod1Y2, which = c(1,2)) +
+  geom_point(col = color_set6[1]) +
+  labs(caption = "adjR2Mod1Y2") +
+  theme_ds2()
+
+autoplot(adjR2Mod2, which = c(1,2)) +
+  geom_point(col = color_set6[2]) +
+  labs(caption = "adjR2Mod2") +
+  theme_ds2()
+
+autoplot(adjR2Mod2Y2, which = c(1,2)) +
+  geom_point(col = color_set6[2]) +
+  labs(caption = "adjR2Mod2Y2") +
+  theme_ds2()
+
+autoplot(adjR2Mod3, which = c(1,2)) +
+  geom_point(col = color_set6[3]) +
+  labs(caption = "adjR2Mod3") +
+  theme_ds2()
+
+autoplot(adjR2Mod3Y2, which = c(1,2)) +
+  geom_point(col = color_set6[3]) +
+  labs(caption = "adjR2Mod3Y2") +
+  theme_ds2()
+
+autoplot(adjR2Mod4, which = c(1,2)) +
+  geom_point(col = color_set6[4]) +
+  labs(caption = "adjR2Mod4") +
+  theme_ds2()
+
+autoplot(adjR2Mod4Y2, which = c(1,2)) +
+  geom_point(col = color_set6[4]) +
+  labs(caption = "adjR2Mod4Y2") +
+  theme_ds2()
+
+autoplot(adjR2Mod5, which = c(1,2)) +
+  geom_point(col = color_set6[5]) +
+  labs(caption = "adjR2Mod5") +
+  theme_ds2()
+
+autoplot(adjR2Mod5Y2, which = c(1,2)) +
+  geom_point(col = color_set6[5]) +
+  labs(caption = "adjR2Mod5Y2") +
+  theme_ds2()
+
+autoplot(stepMod2, which = c(1,2)) +
+  geom_point(col = color_set6[6]) +
+  labs(caption = "stepMod2") +
+  theme_ds2()
+
+autoplot(stepMod2Y2, which = c(1,2)) +
+  geom_point(col = color_set6[6]) +
+  labs(caption = "stepMod2Y2") +
+  theme_ds2()
+```
+
+The quadratic transformation noticeably improves the pattern of residual plot scatter among the `adjR2Mod[#]` models, while only marginally affecting `stepMod2`. 
+
+However, `adjR2Mod1Y2`, `adjR2Mod3Y2`, `adjR2Mod4Y2`, and `adjR2Mod5Y2` (versions with quadratic-transformed Y, or `eConsPctFF2`) still have distinct narowing scatter on the right side.
+
+As for the Q-Q plots:
+
+* `adjR2Mod1` looks acceptable (not to say excellent) in both the transformed and non-transformed Y cases
+* A quadratic transformation introduces some minor left-tail skewness for `adjR2Mod2Y2` as well as left- and right-tail skewness for `adjR2Mod3` 
+* `adjR2Mod4` shifts from having some series of 'slanted line' points at both upper and lower ends to having mostly linear patterning except for an upper-right region of the quadratic-transformed Y plot; this is similarly the case for `adjR2Mod5`
+* The Q-Q plot for `stepMod2` doesn't improve much with the qudratic transformation on Y, and in either of the  transformed or non-transformed cases, appears to have inferior Q-Q plots compared with the `adjR2[#]` series of models.
+
+**Based on the above, models `adjR2Mod1`, `adjR2Mod1Y2`, `adjR2Mod2`, `adjR2Mod3`, `adjR2Mod3Y2`, `adjR2Mod4`, `adjR2Mod4Y2`, `adjR2Mod5`, `adjR2Mod5Y2`, `stepMod2`, and `stepMod2Y2` are all removed from further consideration.**
+
+**This leaves `adjR2Mod2Y2` as the best candidate for the final model used.**
+
+#### Second check of VIF for remaining models
+```{r, message = FALSE, warning = FALSE}
+library(car)
+
+# Generating the VIF summary
+vif(adjR2Mod2Y2)
+```
+
+VIF is still good for `adjR2Mod2Y2`.
+Now it is time to check the model's partial regression (added-variable) plots to determine if transformations on X are appropriate.
+
+```{r, echo = FALSE}
+adjR2Mod2Y2 <- lm(eConsPctFF2 ~ hydroECons + windECons + biomassECons + nclrECons + coalECons + natGasEProd + netEBalance + gdpPerCapK + gdpPctBusProfSvc + gdpPctMining + pres2016PctDem + rps2015 + persIncPerCapK + annMeanInsol, data = finalDatV2)
+```
+
+** Linearity between Y and each X check - partial regression / added variable plots**
+```{r, message = FALSE}
+library(MASS)
+avPlots(adjR2Mod2Y2, ask = FALSE, col = color_set6[2], pch = 16, col.lines = "blue", lwd = 1.5,
+grid = FALSE)
+```
+The majority of added-variable plots above suggest each variable has a reasonably linear association with `eConsPctFF2`, except for perhaps `natGasEProd`, which has a large cloud of points centered around zero and a few distant points at either side.
+
+
+**Consider knot regression for netEBalance, knot at 0**
+(Didn't lead to any improvement to the model)
+
+#### Considering X variable transformations
+```{r}
+# Need to shift netEbalance to avoid negative values for the boxTidwell() function
+
+finalDatV3 <- finalDatV2 %>%
+  mutate(hydroECons = if_else(hydroECons == 0, 1e-99, hydroECons),
+         windECons = if_else(windECons == 0, 1e-99, windECons),
+         biomassECons = if_else(biomassECons == 0, 1e-99, biomassECons),
+         nclrECons = if_else(nclrECons == 0, 1e-99, nclrECons),
+         coalECons = if_else(coalECons == 0, 1e-99, coalECons),
+         natGasEProd = if_else(natGasEProd == 0, 1e-99, natGasEProd),
+         gdpPerCapK = if_else(gdpPerCapK == 0, 1e-99, gdpPerCapK),
+         gdpPctBusProfSvc = if_else(gdpPctBusProfSvc == 0, 1e-99, gdpPctBusProfSvc),
+         gdpPctMining = if_else(gdpPctMining == 0, 1e-99, gdpPctMining))
+
+boxTidwell(eConsPctFF2 ~ hydroECons + biomassECons + natGasEProd + coalECons, other.x = ~  windECons + nclrECons + gdpPerCapK + gdpPctBusProfSvc + rps2015 + gdpPctMining + pres2016PctDem + netEBalance + persIncPerCapK + annMeanInsol, data = finalDatV3, max.iter = 50)
+```
+
+None of the added-variable plots point to a clear variable needing transformation, and the `boxTidwell()` funtion doesn't flag any variables at the 0.05 level for transformation - `biomassECons` looks like a possible candidate for a logarithmic transformation, but this didn't really improve the model's diagnostic plots.
+
+For the sake of demonstrating the concept, quadratic transformation of `netEBalance` (with centering to orthogonalize the quadratic term) will be considered.
+
+```{r}
+#library(dplyr)
+finalDatV2 <- finalDatV2 %>% 
+  mutate(netEBalanceC = netEBalance - mean(netEBalance),
+         netEBalanceC2 = netEBalanceC^2)
+
+adjR2Mod2Y2Quad <- update(adjR2Mod2Y2, .~. -netEBalance + netEBalanceC + netEBalanceC2)
+
+# Confirming multicollinearity is addressed by centering
+vif(adjR2Mod2Y2Quad)
+
+summary(adjR2Mod2Y2Quad)
+
+autoplot(adjR2Mod2Y2Quad, which = c(1,2)) +
+  geom_point(col = color_set6[2]) +
+  labs(caption = "adjR2Mod2Y2Quad") +
+  theme_ds2()
+
+#library(MASS)
+avPlots(adjR2Mod2Y2Quad, ask = FALSE, col = color_set6[2], pch = 16, col.lines = "blue", lwd = 1.5,
+grid = FALSE)
+```
+
+While each of the diagnostics looks alright, there isn't really any improvement to the model, and the centered quadratic term does not have a slope coefficient that is statistically significantly different from zero. Therefore, it will not be added to the model.
+
+### Considering interaction terms among Xs (first-order interactions only)
+```{r}
+# All interactions deemed to "make some kind of sense" (to me)
+
+finalDatV2 <- finalDatV2 %>%
+  mutate(hydroEConsXnetEBalance = hydroECons * netEBalance, 
+         biomassEConsXnetEBalance = biomassECons * netEBalance,
+         nclrEConsXnetEBalance = nclrECons * netEBalance,
+         coalEConsXnetEBalance = coalECons * netEBalance,
+         natGasEProdXnetEBalance = natGasEProd * netEBalance,
+         gdpPctBusProfSvcXgdpPerCapK = gdpPctBusProfSvc * gdpPerCapK,
+         gdpPctMiningXcoalECons = gdpPctMining * coalECons,
+         gdpPctMiningXpres2016PctDem = gdpPctMining * pres2016PctDem,
+         gdpPerCapKXpersIncPerCapK = gdpPerCapK * persIncPerCapK,
+         annMeanInsolXwindECons = annMeanInsol * windECons)
+```
+```{r}
+# Checking interaction terms one at a time - non-transformed Y stepwise model
+adjR2Mod2Y2Int <- update(adjR2Mod2Y2, .~. +hydroEConsXnetEBalance)
+summary(adjR2Mod2Y2Int)
+extractAIC(adjR2Mod2Y2Int)
+vif(adjR2Mod2Y2Int)
+
+autoplot(adjR2Mod2Y2Int, which = c(1,2)) +
+  geom_point(col = color_set6[2]) +
+  labs(caption = "adjR2Mod2Y2Int") +
+  theme_ds2()
+
+#library(MASS)
+avPlots(adjR2Mod2Y2Int, ask = FALSE, col = color_set6[2], pch = 16, col.lines = "blue", lwd = 1.5,
+grid = FALSE)
+```
+
+
+The above output shows the best-performing interaction among those considered - this interaction term, while not statistically significant at level 0.05, slightly improves the model's R<sup>2</sup><sub>adj</sub> value (0.764 without the term, 0.770 with it) and AIC value (691.3 without, 690.4 with). It also seems to slightly improve the model's residual plot, and doesn't materially impact the Q-Q plot. Therefore, I will retain the interaction term. Its coefficient can be interpreted as follows: when controlling for all other variables in the model, the slope of `netEBalance` is associated with an average decrease of about 0.003 for each 1-unit increase in `hydroECons`; both variables are measured in trillions of BTUs. While interaction terms can generally be interpreted in either direction (that is, we might discuss the average change in `hydroECons` per 1 unit change in `netEBalance` after controlling for all other variables), it seems more logical to consider hydroelectricity consumption effects to potentially influence a state's net energy balance than the reverse.
+
+**Since the interaction term will be retained, the final model is as shown in the summary directly above.**
+
+
+
+
+### Fitted versus Residuals Plots 
+```{r}
+# Overall Fitted vs. Residuals Plots
+#library(dplyr)
+#library(MASS)
+finalDatV2 <- finalDatV2 %>%
+  mutate(fittedMod = predict(adjR2Mod2Y2Int, data = finalDatV2),
+         ordResid = adjR2Mod2Y2Int$residuals,
+         studResid = studres(adjR2Mod2Y2Int))
+
+plotDefaults <- list(geom_point(col = color_set6[2]),
+geom_hline(yintercept = 0, linetype = 2, col = "darkgrey"),
+theme_ds2(),
+theme(axis.text = element_text(color="#000000", size = 12)),
+theme(plot.margin = unit(rep(0.5,4), units = "cm")))
+
+residPlotOrd <- ggplot(finalDatV2, aes(x = fittedMod, y = ordResid)) +
+plotDefaults +
+labs(title = "Ordinary Residuals vs. \n Fitted values", x = "Fitted values",
+y = "Ordinary Residuals")
+
+residPlotStud <- ggplot(finalDatV2, aes(x = fittedMod, y = studResid)) +
+plotDefaults +
+labs(title = "Studentized Residuals vs. \n Fitted values", x = "Fitted values",
+y = "Studentized Residuals")
+
+library(cowplot)
+plot_grid(residPlotOrd, residPlotStud, ncol = 2, align = "h")
+
+# The Studentized residuals indicate at least one outlier point, possibly up to four
+```
+
+### Influential Points Plots
+
+```{r}
+# Influential measures for the reduced model
+#library(dplyr)
+finalDatV2 <- finalDatV2 %>%
+  mutate(cooksD = cooks.distance(adjR2Mod2Y2Int),
+         dfFits = dffits(adjR2Mod2Y2Int),
+         dfBetashydroECons = dfbetas(adjR2Mod2Y2Int)[,2],  #col 1 is for the intercept
+         dfBetaswindECons = dfbetas(adjR2Mod2Y2Int)[,3],
+         dfBetasbiomassECons = dfbetas(adjR2Mod2Y2Int)[,4],
+         dfBetasnclrECons = dfbetas(adjR2Mod2Y2Int)[,5],
+         dfBetascoalECons = dfbetas(adjR2Mod2Y2Int)[,6],
+         dfBetasnatGasEProd = dfbetas(adjR2Mod2Y2Int)[,7],
+         dfBetasnetEBalance = dfbetas(adjR2Mod2Y2Int)[,8],
+         dfBetasgdpPerCapK = dfbetas(adjR2Mod2Y2Int)[,9],
+         dfBetasgdpPctBusProfSvc = dfbetas(adjR2Mod2Y2Int)[,10],
+         dfBetasgdpPctMining = dfbetas(adjR2Mod2Y2Int)[,11],
+         dfBetaspres2016PctDem = dfbetas(adjR2Mod2Y2Int)[,12],
+         dfBetasrps2015Voluntary = dfbetas(adjR2Mod2Y2Int)[,13],
+         dfBetasrps2015Yes = dfbetas(adjR2Mod2Y2Int)[,14],
+         dfBetaspersIncPerCapK = dfbetas(adjR2Mod2Y2Int)[,15],
+         dfBetasannMeanInsol = dfbetas(adjR2Mod2Y2Int)[,16],         
+         dfBetashydroEConsXnetEBal = dfbetas(adjR2Mod2Y2Int)[,17],         
+         covratio = covratio(adjR2Mod2Y2Int))
+
+# Number of slope coefficients in the model
+# used for default influential point cutoffs in DFFits and DFBetas
+
+p <- nrow(summary(adjR2Mod2Y2Int)$coefficients) - 1 # minus 1 accounts for the slope coefficient
+
+# Transforming the dataset to be 'ggplot friendly'
+#library(tidyr)
+library(stringr)
+
+finalDatV2Trans <- finalDatV2 %>% 
+  select(cooksD, dfFits, dfBetashydroECons, dfBetaswindECons, dfBetasbiomassECons, dfBetasnclrECons, dfBetascoalECons, dfBetasnatGasEProd, dfBetasnetEBalance, dfBetasgdpPerCapK, dfBetasgdpPctBusProfSvc, dfBetasgdpPctMining, dfBetaspres2016PctDem, dfBetasrps2015Voluntary, dfBetasrps2015Yes, dfBetaspersIncPerCapK, dfBetasannMeanInsol, dfBetashydroEConsXnetEBal, covratio) %>%
+  gather(key = "metric", value = val)
+#Note: seems to throw an error trying to do all this in a single pipe set
+finalDatV2Trans <- finalDatV2Trans %>%  
+  mutate(influential = if_else((metric == "cooksD")&(val > 1),"influential",
+                   if_else((metric == "dfFits")&(abs(val) > 2*sqrt(p/nrow(finalDatV2))),
+                           "influential",
+                   if_else((str_detect(metric,"dfBetas")) & 
+                             (abs(val)> 2/sqrt(nrow(finalDatV2))),"influential",
+                   if_else((metric == "covratio") &
+                             ((val < 1 - 3*p/nrow(finalDatV2))|(val > 1 + 3*p/nrow(finalDatV2))),
+                           "influential","not")))))
+```
+
+```{r, fig.align = "center"}
+#library(ggplot2)
+colorCols <- c("influential" = color_set6[6], "not" = color_set6[1])
+
+ggplot(finalDatV2Trans, aes(x = val, y = metric)) +
+  geom_jitter(aes(col = influential), size = 2, alpha = 0.5, width = 0, height = 0.1) +
+  labs(title = "Jitter Plot of Observations \n by Influence Metrics", 
+       x = "", y = "Metric", subtitle = "'Influential' based on text-suggested defaults only", color = NULL) +
+  scale_color_manual(values = colorCols) +
+  scale_x_continuous(breaks = seq(-2, 7, 1)) +
+  theme_ds2() +
+  theme(panel.grid.major.y = element_line(color = "lightgrey", linetype = 1))
+```
+
+
