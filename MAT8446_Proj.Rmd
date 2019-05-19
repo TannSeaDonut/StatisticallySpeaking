@@ -1,0 +1,964 @@
+---
+title: "MAT8446_Proj"
+author: "Duane Stanton"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    theme: united
+    highlight: haddock
+    toc: TRUE
+    toc_float: 
+      smooth_scroll: FALSE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<style>
+.list-group-item.active, .list-group-item.active:focus, .list-group-item.active:hover {
+    background-color: #00205B;
+    color: #13B5EA;
+}
+</style>
+
+```{r, echo = FALSE}
+# Plot setup
+theme_ds1 <- function(base_size = 14){
+  theme_bw(base_size = base_size) %+replace%
+    theme(
+      #line = element_line(color = "#000000"),
+      #text = element_text(color = "#000000"),
+      axis.title = element_text(color = "#000000", face = "plain"),
+      axis.text = element_text(color="#000000", size = 13),
+      axis.line = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      #axis.line.y = element_line(size = 0.5, linetype = 1, color = "#505050"),
+      #legend.key = element_rect(color="#D2E2F9", fill = "#FFFFFF", linetype = 0),
+      legend.title = element_text(size = 12, face = "italic"),
+      legend.title.align = 0.5,
+      legend.text = element_text(size = 12.5),
+      legend.background = element_rect(size = 0.1, color = "#EAEAEA", fill = "#FFFFFF", linetype = 0),
+      panel.grid = element_line(color = "#505050", linetype = 0, size = 0.5),
+      #panel.grid.minor.x = element_line(size = 0.35),
+      #panel.grid.minor.y = element_line(size = 0.35),
+      panel.border = element_rect(color = "#EAEAEA", fill = NA),
+      panel.background = element_rect(fill = "#FFFFFF"),
+      #plot.title = element_text(color = "#000000"),
+      plot.background = element_rect(color = NA, fill = "#FFFFFF"),
+      plot.title = element_text(hjust = 0.5, face = "plain"),
+      plot.caption=element_text(size=11, hjust=1, face="italic", color="black")
+      #strip.text = element_text(size = 12),
+      #strip.background = element_rect(fill = NA),
+      )
+}
+
+library(ggplot2)
+theme_set(theme_ds1())
+
+color_set6 <- c("#00205B", "#13b5ea", "#CDB87D", "#EEB31B", "#894600", "#E27400")
+```
+
+## Loading the Data
+```{r, message = FALSE}
+setwd("C:/Users/Duane/Documents/Academic/Villanova/3. Summer 18_MAT8446_Survival Analysis/Project")
+
+colClass <- c("integer", "character", "character", "character", "factor", "factor", "character", 
+              "character", "character", "character", "factor", "character", "factor", "integer", 
+              "character", "character", "character", "character", "Date", "Date", "Date", 
+              "Date", "Date", "Date", "character", "character", "character", "integer", 
+              "character", "character", "factor", "factor", "logical", rep("logical", 19),
+              rep("logical", 11), rep("character", 3), rep("logical", 6), "integer")
+
+studyData <- read.csv("studyData.csv", colClasses = colClass)
+
+# Need to remove studies with NA in the following list of variables considered:
+library(dplyr)
+studyData <- studyData %>% 
+  filter(!is.na(Gender), !is.na(Enrollment))
+
+# Filtering to studies with studyLength <= 10 years; this is 99.72% of the data:
+paste("% of studies with length <= 10 years:", round(mean(studyData$studyLengthDays <= 3650), 5))
+
+studyData <- studyData[studyData$studyLengthDays <= 3650,]
+
+# Also need to remove one study listed as 'Completed' but which has a record of 0 Enrollment
+studyData <- studyData[studyData$NCT.Number != "NCT01346319",]
+
+studyData$logEnrollment <- ifelse(studyData$Enrollment == 0, log(0.1), log(studyData$Enrollment))
+
+# Late-entry new variables for outcome measure terms
+studyData$outcomeMsrAUC <- grepl("AUC", studyData$Outcome.Measures)
+studyData$outcomeMsrCmax <- grepl("Cmax", studyData$Outcome.Measures)
+studyData$outcomeMsrSafety <- grepl("Safety", studyData$Outcome.Measures)
+studyData$outcomeMsrEfficacy <- grepl("Efficacy", studyData$Outcome.Measures)
+
+rm(colClass)
+```
+
+# Kaplan-Meier Curves
+```{r}
+library(survival)
+
+# Overall
+# Create `survival` object (requires 1 = event observed, 0 = censored event)
+studySurv <- Surv(time = studyData$studyLengthDays, event = studyData$studyEnded)
+
+# Kaplan-Meier fit, including 95% level log-log pointwise confidence intervals; 
+# conf.int = 0.95 is default
+kmFit <- survfit(studySurv ~ 1, data = studyData, conf.type = "log-log")
+
+# Plotting the data
+library(ggplot2)
+library(ggfortify)
+
+autoplot(kmFit, surv.size = 1.5, censor.shape = "|", censor.colour = color_set6[2], 
+         conf.int = TRUE, conf.int.fill = color_set6[6], conf.int.alpha = 0.4) +
+  labs(title = "Kaplan-Meier Survival Curve and 95% CI", subtitle = "Overall",
+       x = "Study length (days)", y = "Survival probability") +
+  scale_x_continuous(breaks = seq(0, max(studyData$studyLengthDays), 365))
+
+# Stratifying by study Phase
+kmFitPhase <- survfit(studySurv ~ Phases, data = studyData, conf.type = "log-log")
+
+autoplot(kmFitPhase, surv.size = 1.5, censor.shape = "|", censor.alpha = 0.4, conf.int = FALSE) +
+  labs(title = "Kaplan-Meier Survival Curve", subtitle = "By study phase", 
+       x = "Study length (days)", y = "Survival probability", color = "Phase", fill = "Phase") +
+  scale_color_manual(labels = c("0 / Early 1", "1", "2", "3", "4"), 
+                     values = color_set6[-3]) +
+  scale_x_continuous(breaks = seq(0, max(studyData$studyLengthDays), 365)) +
+  theme(legend.position = "top",
+        legend.box.margin = margin(t = 0, r = 0, b = -1.75, l = 0, unit = "cm"))
+
+
+# Summary table of study lengths and counts/% by phase
+library(dplyr)
+studyData %>% group_by(Phases) %>% 
+  summarize(meanDays = mean(studyLengthDays), medDays = median(studyLengthDays),
+            count = n(), pctTotal = round(n()*100/nrow(studyData), 1))
+
+rm(studySurv, kmFit, kmFitPhase)
+```
+
+```{r, echo = FALSE}
+map_cg_levels <- function(tenObj, survfitRHSVector){
+  if(is.numeric(survfitRHSVector)){
+    cg <- unname(unlist(attributes(tenObj)$longNames[,1]))
+    # The next line removes any backslashes, parentheses, or empty spaces from the different levels/values of the survfit right hand side variable when extracted from attributes(tenObj)$longNames
+    # It also selects only NON-'(Intercept)' strings
+    connectedValue <- gsub('\\', '', gsub(')', '', gsub(' ', '', 
+                                                        grep('(Intercept)', strsplit(as.character(attributes(tenObj)$longNames[,2]), split = ",")[[1]], 
+                                                             invert = TRUE, value = TRUE))))
+    output <- data.frame(cg, connectedValue)
+  } else if(is.factor(survfitRHSVector) | is.character(survfitRHSVector)){
+    cg <- unname(unlist(attributes(tenObj)$longNames[,1]))
+    # Remove the '(Intercept)=1, ' section of each string, and keep only the strings containing 'survfitRHSVector' text
+    relevantValues <- grep(gsub('^.+[$]', '', deparse(substitute(survfitRHSVector))), 
+                           unlist(strsplit(gsub('\\(Intercept)=1, ', '', as.character(attributes(tenObj)$longNames[,2])), 
+                                           split = '\\"')), value = TRUE)
+    conVal <- data.frame(do.call('rbind', strsplit(relevantValues, split = ',')))
+    # Remove leading spaces
+    conVal <-  data.frame(gsub(' ', '', as.matrix(conVal)))
+    # Replace all strings containing '=0' (not a match) with empty space, by row, then combine strings within each row
+    conVal <- lapply(conVal, function(x) gsub('.*=0', '', x))
+    conVal <- data.frame(connectedValue = do.call(paste0, conVal))
+    # Convert strings to character (may be factor at this point)
+    conVal[] <- lapply(conVal, as.character)
+    # Input the 'survfitRHSVector' reference level for the blank cell; only the row with 'cg' value mapped to the reference level should be blank ('')
+    conVal[which(conVal == ''),] <- paste(gsub('^.+[$]', '', deparse(substitute(survfitRHSVector))), levels(as.factor(survfitRHSVector))[1], '=1', sep = '')
+    # Remove '=1' from each string
+    conVal <- lapply(conVal, function(x) gsub('=1', '', x))
+    output <- data.frame(cg, conVal)
+  } else {
+    output <- "Not available - note that the survfitRHSVector argument must use the format dataset$columnName
+  Consider attributes(tenObj)$longNames if issues persist."
+  }
+  return(output)
+} 
+```
+
+## Statistical test of survival curves differing by study phase
+```{r, message = FALSE}
+options(show.signif.stars = FALSE)
+
+# row '1': log-rank weight test
+# row 'n': Gehan-Breslow generalized Wilcoxon test
+# row 'sqrtN': Tarone-Ware weight test
+# row 'S1': Peto-Prentice / Peto-Peto / Peto-Peto-Prentice weight test
+# row 'S2': modified Peto-Peto weight test
+# row 'FH_p=1_q=1': Fleming-Harrington weight test
+library(survMisc)
+tenObj <- ten(survfit(Surv(time = studyLengthDays, event = studyEnded) ~ Phases, data = studyData))
+
+map_cg_levels(tenObj, studyData$Phases)
+
+comp(tenObj, scores = c(0, 4, 3, 2, 1), data = studyData)
+
+rm(tenObj)
+```
+
+# Smoothed estimated hazard function
+```{r}
+# Plotting the smoothed *overall* estimated hazard function
+library(muhaz)
+haz <- muhaz(times = studyData$studyLengthDays, delta = studyData$studyEnded)
+
+#library(ggfortify)
+#library(ggplot2)
+plotDat <- data.frame(time = haz$est.grid,
+                      hazVal = haz$haz.est)
+
+ggplot(plotDat, aes(x = time, y = hazVal)) +
+  geom_line(col = color_set6[1], size = 1.5) +
+  labs(title = "Estimated Smoothed Hazard Function", 
+       subtitle = "Overall", 
+       x = "Study length (days)", y = "Hazard rate") +
+  scale_x_continuous(breaks = seq(0, max(studyData$studyLengthDays), 365)) +
+  scale_y_continuous(breaks = seq(0, max(plotDat$hazVal) * 1.05, 3e-3))
+  
+
+# Plotting the smoothed estimated hazard function
+# *broken out by study phase*
+phase0 <- studyData %>% filter(Phases == "Early Phase 1")
+hazPhase0 <-  muhaz(times = phase0$studyLengthDays, delta = phase0$studyEnded)
+phase1 <- studyData %>% filter(Phases == "Phase 1")
+hazPhase1 <-  muhaz(times = phase1$studyLengthDays, delta = phase1$studyEnded)
+phase2 <- studyData %>% filter(Phases == "Phase 2")
+hazPhase2 <-  muhaz(times = phase2$studyLengthDays, delta = phase2$studyEnded)
+phase3 <- studyData %>% filter(Phases == "Phase 3")
+hazPhase3 <-  muhaz(times = phase3$studyLengthDays, delta = phase3$studyEnded)
+phase4 <- studyData %>% filter(Phases == "Phase 4")
+hazPhase4 <-  muhaz(times = phase4$studyLengthDays, delta = phase4$studyEnded)
+
+plotDat <- data.frame(time = c(hazPhase0$est.grid, hazPhase1$est.grid, hazPhase2$est.grid, hazPhase3$est.grid, 
+                               hazPhase4$est.grid),
+                      hazVal = c(hazPhase0$haz.est, hazPhase1$haz.est, hazPhase2$haz.est, hazPhase3$haz.est,
+                                 hazPhase4$haz.est),
+                      phase = c(rep("0 / Early 1", length(hazPhase0$est.grid)), 
+                                rep("1", length(hazPhase1$est.grid)), rep("2", length(hazPhase2$est.grid)),
+                                rep("3", length(hazPhase3$est.grid)), rep("4", length(hazPhase4$est.grid))))
+
+ggplot(plotDat, aes(x = time, y = hazVal)) +
+  geom_line(aes(col = phase), size = 1.5) +
+  scale_y_continuous(breaks = seq(0, max(plotDat$hazVal) * 1.05, 3e-3)) +
+  labs(title = "Estimated Smoothed Hazard Function", 
+       subtitle = "Broken out by study phase", 
+       x = "Study length (days)", y = "Hazard rate", col = "Phase:") +
+  scale_x_continuous(breaks = seq(0, max(studyData$studyLengthDays), 365))+
+  scale_color_manual(values = color_set6[-3]) +
+  theme(legend.position = "top",
+        legend.box.margin = margin(t = 0, r = 0, b = -1.75, l = 1, unit = "cm"))
+
+rm(haz, plotDat, hazPhase0, hazPhase1, hazPhase2, hazPhase3, hazPhase4)
+```
+This plot shows very strong evidence that the proportional hazard condition does not hold across different study phases, and therefore a Cox PH model would not be approrpiate here. Going forward, the data will be broken out by study phase for fitting individual models.
+
+Additionally, the Phase 1 estimated hazard function looks very volatile - there may be some structural factor involved here (such as the diversity of studies at the phase 1 stage, which is often the first step in a therapy's clinical trial journey - perhaps studies in later phases are more similar due to selection out).
+
+# Determining the optimal AFT model survival time distribution using AIC
+## All data
+```{r}
+# Using the 'full' model
+# Generating the models - flexsurvreg doesn't work (throws errors)
+#library(flexsurv)
+
+#exponenMod <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + country + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, data = studyData, dist = "exponential", control = list(reltol = 1e-50, maxit = 30000, ndeps = rep(1e-10, 48)))
+
+# TESTED BUT REMOVED: + outcomeMsrAUC + outcomeMsrCmax + outcomeMsrEfficacy + outcomeMsrEfficacy
+# OUTCOME MEASURES MAY BE TOO NEBULOUS FOR THIS ANALYSIS - AND NO IMPROVEMENT FOR AFT SURVIVAL / CUMHAZ CURVES
+
+weibMod <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = studyData, dist = "weibull")
+
+exponenMod <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = studyData, dist = "exponential")
+
+lognormMod <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = studyData, dist = "lognormal")
+
+loglogistMod <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = studyData, dist = "loglogistic")
+
+#library(flexsurv)
+
+#gammaMod <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, data = studyData, dist = "gamma")
+  
+# genGammaMod <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, data = studyData, dist = "gengamma")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod)[2], extractAIC(exponenMod)[2], extractAIC(lognormMod)[2], extractAIC(loglogistMod)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod, lognormMod, loglogistMod, modelDist, modelAIC, modAICDat)
+```
+**All data: Weibull**
+
+## Phase 0 / Early Phase 1
+```{r}
+# Using the 'full' model
+
+weibMod0 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase0, dist = "weibull")
+
+exponenMod0 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase0, dist = "exponential")
+
+lognormMod0 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase0, dist = "lognormal")
+
+loglogistMod0 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase0, dist = "loglogistic")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod0)[2], extractAIC(exponenMod0)[2], extractAIC(lognormMod0)[2], extractAIC(loglogistMod0)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod0, lognormMod0, loglogistMod0, modelDist, modelAIC, modAICDat)
+```
+**Phase 0: Weibull**
+
+## Phase 1
+```{r}
+# Using the 'full' model
+
+weibMod1 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase1, dist = "weibull")
+
+exponenMod1 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase1, dist = "exponential")
+
+lognormMod1 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase1, dist = "lognormal")
+
+loglogistMod1 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase1, dist = "loglogistic")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod1)[2], extractAIC(exponenMod1)[2], extractAIC(lognormMod1)[2], extractAIC(loglogistMod1)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod1, lognormMod1, loglogistMod1, modelDist, modelAIC, modAICDat)
+```
+**Phase 1: Weibull**
+
+## Phase 2
+```{r}
+# Using the 'full' model
+
+weibMod2 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase2, dist = "weibull")
+
+exponenMod2 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase2, dist = "exponential")
+
+lognormMod2 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase2, dist = "lognormal")
+
+loglogistMod2 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase2, dist = "loglogistic")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod2)[2], extractAIC(exponenMod2)[2], extractAIC(lognormMod2)[2], extractAIC(loglogistMod2)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod2, lognormMod2, loglogistMod2, modelDist, modelAIC, modAICDat)
+```
+**Phase 2: Weibull**
+
+## Phase 3
+```{r}
+# Using the 'full' model
+
+weibMod3 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase3, dist = "weibull")
+
+exponenMod3 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase3, dist = "exponential")
+
+lognormMod3 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase3, dist = "lognormal")
+
+loglogistMod3 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase3, dist = "loglogistic")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod3)[2], extractAIC(exponenMod3)[2], extractAIC(lognormMod3)[2], extractAIC(loglogistMod3)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod3, lognormMod3, loglogistMod3, modelDist, modelAIC, modAICDat)
+```
+**Phase 3: Weibull**
+
+## Phase 4
+```{r}
+# Using the 'full' model
+
+weibMod4 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase4, dist = "weibull")
+
+exponenMod4 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase4, dist = "exponential")
+
+lognormMod4 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase4, dist = "lognormal")
+
+loglogistMod4 <- survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, 
+data = phase4, dist = "loglogistic")
+
+# Generating a summary table of the models' AIC values
+modelDist <- c("Weibull", "Exponential", "Log-normal", "Log-logistic")
+modelAIC <- round(c(extractAIC(weibMod4)[2], extractAIC(exponenMod4)[2], extractAIC(lognormMod4)[2], extractAIC(loglogistMod4)[2]), 3)
+
+modAICDat <- data.frame(modelDist, modelAIC)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+modAICDat %>%
+  mutate(modelAIC = cell_spec(modelAIC, format = "html",
+                              bold = if_else(modelAIC == min(modelAIC), TRUE, FALSE)))  %>%
+  kable(format = "html", escape = FALSE) %>% 
+  kable_styling(bootstrap_options = c("condensed", "bordered"))
+
+rm(exponenMod4, lognormMod4, loglogistMod4, modelDist, modelAIC, modAICDat)
+```
+**Phase 4: Weibull**
+
+## Naive stepwise selections of the Weibull parametric model
+```{r, eval = FALSE, error = FALSE, message = FALSE}
+library(MASS)
+
+# All data
+emptyMod <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = studyData, dist = "weibull")
+stepAICWeibAFT <- stepAIC(emptyMod, scope = formula(weibMod), direction = "both", 
+                                    trace = FALSE, k = 2)
+stepBICWeibAFT <- stepAIC(emptyMod, scope = formula(weibMod), direction = "both", 
+                                    trace = FALSE, k = log(nrow(studyData)))
+# AIC
+#emptyMod0 <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = phase0, dist = "weibull")
+#stepAICPhase0 <- round(summary(stepAIC(emptyMod0, scope = formula(weibMod0), direction = "both", 
+#                                    trace = FALSE, k = 2))$coefficients, 4)
+#emptyMod1 <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = phase1, dist = "weibull")
+#stepAICPhase1 <- round(summary(stepAIC(emptyMod1, scope = formula(weibMod1), direction = "both", 
+#                                    trace = FALSE, k = 2))$coefficients, 4)
+#emptyMod2 <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = phase2, dist = "weibull")
+#stepAICPhase2 <- round(summary(stepAIC(emptyMod2, scope = formula(weibMod2), direction = "both", 
+#                                    trace = FALSE, k = 2))$coefficients, 4)
+#emptyMod3 <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = phase3, dist = "weibull")
+#stepAICPhase3 <- round(summary(stepAIC(emptyMod3, scope = formula(weibMod3), direction = "both", 
+#                                    trace = FALSE, k = 2))$coefficients, 4)
+#emptyMod4 <- survreg(Surv(studyLengthDays, studyEnded) ~ 1, data = phase4, dist = "weibull")
+#stepAICPhase4 <- round(summary(stepAIC(emptyMod4, scope = formula(weibMod4), direction = "both", 
+#                                    trace = FALSE, k = 2))$coefficients, 4)
+
+# AIC variables selected (35):
+# Gender, Phases, Enrollment, inOECD, ageGroup, fundedBys, fundedByTop15Pharma, autoimmuneCond, 
+# cancerCond, cardiacCond, circulatoryCond, diabetesCond, digestiveCond, healthyCond, infectiousDiseaseCond,
+# immuneSysCond, psychCond, neuralCond, opticalCond, painCond, respiratoryCond, txDynamicsCond, otherCond,
+# behavioralInt, biologicalInt, comboProdInt, deviceInt, geneticInt, procedureInt, primaryPurpose, 
+# allocation, interventionMod, maskingCarePrvdr, maskingPartcpt, maskingNone
+
+# BIC
+#BwdBICPhase0 <- round(summary(stepAIC(weibMod0, trace = FALSE, k = log(nrow(phase0))))$coefficients, 4)
+#BwdBICPhase1 <- round(summary(stepAIC(weibMod1, trace = FALSE, k = log(nrow(phase1))))$coefficients, 4)
+#BwdBICPhase2 <- round(summary(stepAIC(weibMod2, trace = FALSE, k = log(nrow(phase2))))$coefficients, 4)
+#BwdBICPhase3 <- round(summary(stepAIC(weibMod3, trace = FALSE, k = log(nrow(phase3))))$coefficients, 4)
+#BwdBICPhase4 <- round(summary(stepAIC(weibMod4, trace = FALSE, k = log(nrow(phase4))))$coefficients, 4)
+
+# BIC variables selected (26):
+# Gender, Phases, Enrollment, inOECD, ageGroup, fundedBys, fundedByTop15Pharma, autoimmuneCond,
+# cancerCond, cardiacCond, circulatoryCond, healthyCond, infectiousDiseaseCond, psychCond, neuralCond,
+# painCond, txDynamicsCond, otherCond, behavioralInt, biologicalInt, deviceInt, procedureInt, 
+# primaryPurpose, allocation, interventionMod, maskingPartcpt
+
+#rm(emptyMod, empytMod0, emptyMod1, emptyMod2, emptyMod3, emptyMod4)
+```
+
+## Likelihood ratio test of the AIC- vs. BIC-selected Weibull AFT models
+This is possible because the BIC-selected Weibull AFT model is a subset of the AIC-selected model.
+```{r}
+logLikAIC <- stepAICWeibAFT$loglik[2]
+logLikBIC <- stepBICWeibAFT$loglik[2]
+
+# Likelihood Ratio Test statistic
+lrtStat <- -2*(logLikBIC - logLikAIC)
+
+# Degrees of freedom = # covars of the 'full' (AIC) model - # covars of the 'reduced' (BIC) model
+degF <- length(coefficients(stepAICWeibAFT)) - length(coefficients(stepBICWeibAFT))
+  
+# p-value [=p(lrtStat | vars in AIC model but not BIC model aren't important in the model)]
+round(pchisq(lrtStat, df = degF, lower.tail = FALSE), 4)
+```
+Such a low p-value (essentially zero) is very strong evidence against the null hypothesis that variables in the AIC-selected model which aren't in the BIC-selected model are not important. Therefore, we reject the null hypothesis and will use the AIC-selected model.
+
+# Assessing Weibull AFT model goodness-of-fit (AIC selection)
+```{r}
+# Comparing the selected Weibull model survival curve to the K-M survival curve
+# Using software default of comparing at mean covariate values
+library(flexsurv)
+
+# UPDATED VERSION WITH OUTCOME MEASURES
+weibAFT_AICFlex2 <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + outcomeMsrAUC + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + fundedByTop15Pharma + autoimmuneCond + psychCond + cardiacCond + Enrollment + outcomeMsrCmax + procedureInt + circulatoryCond + otherCond + biologicalInt + allocation + immuneSysCond + maskingPartcpt + behavioralInt + infectiousDiseaseCond + maskingNone + digestiveCond + deviceInt + maskingCarePrvdr + comboProdInt + otherInt + respiratoryCond + geneticInt + dietSupplmtInt, 
+data = studyData, dist = "weibull", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 75)))
+
+weibAFT_AICFlex <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + Enrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt, 
+data = studyData, dist = "weibull", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 73)))
+
+deciles <- c(1:10)/10
+
+plot(weibAFT_AICFlex2, type = "survival", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M survival curves",
+     xlab = "Time (days)", ylab = "Survival probability", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", yaxt = "n")
+axis(side = 1, at = seq(0, 3650, by = 365))
+axis(side = 2, at=pretty(deciles), lab=paste0(pretty(deciles) * 100, "%"), las = 1)
+legend(1500, 0.7, c("Nonparametric K-M curve", "Parametric Weibull AFT model curve"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+
+plot(weibAFT_AICFlex2, type = "cumhaz", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M cumulative hazard",
+     xlab = "Time (days)", ylab = "Cumulative hazard", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", las = 2)
+axis(side = 1, at = seq(0, 3650, by = 365))
+legend(0, 10, c("Nonparametric K-M cumulative hazard", "Parametric Weibull AFT cumulative hazard"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+
+
+# AFTER Revising Enrollment to log(Enrollment) and including interaction terms
+weibAFT_AICFlex2 <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynCancerCond + txDynHealthyCond, 
+data = studyData, dist = "weibull", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 73)))
+
+plot(weibAFT_AICFlex2, type = "survival", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M survival curves",
+     xlab = "Time (days)", ylab = "Survival probability", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", yaxt = "n")
+axis(side = 1, at = seq(0, 3650, by = 365))
+axis(side = 2, at=pretty(deciles), lab=paste0(pretty(deciles) * 100, "%"), las = 1)
+legend(1500, 0.7, c("Nonparametric K-M curve", "Parametric Weibull AFT model curve"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+
+plot(weibAFT_AICFlex2, type = "cumhaz", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M cumulative hazard",
+     xlab = "Time (days)", ylab = "Cumulative hazard", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", las = 2)
+axis(side = 1, at = seq(0, 3650, by = 365))
+legend(0, 10, c("Nonparametric K-M cumulative hazard", "Parametric Weibull AFT cumulative hazard"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+
+rm(deciles)
+```
+
+# Assessing quantitative covariate forms via Martingale residuals (AIC selection)
+```{r}
+# Extracting standard residuals from the model
+standResid <- (log(studyData$studyLengthDays) - predict(stepAICWeibAFT, type = "lp")) / stepAICWeibAFT$scale
+
+# Extracting Cox-Snell residuals
+csResid <- -log(exp(-exp(standResid)))
+
+# Martingale residuals
+studyData$martingaleResid <- studyData$studyEnded - csResid
+
+# Plotting Martingale residuals on study enrollment, with loess curve
+library(ggplot2)
+ggplot(studyData, aes(x = Enrollment, y = martingaleResid)) +
+  geom_point(col = color_set6[2], alpha = 0.3) +
+  geom_smooth(col = color_set6[1], method = "loess", se = FALSE) +
+  geom_hline(yintercept = 0, col = "darkgrey", linetype = 2) +
+  labs(title = "Plot of Martingale residuals on study enrollment",
+       subtitle = "Clinical trial study data", 
+       x = "Enrollment (# participants)", y = "Martingale residuals") +
+  scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE))
+
+# log-transformation seems much better
+ggplot(studyData, aes(x = logEnrollment, y = martingaleResid)) +
+  geom_point(col = color_set6[2], alpha = 0.3) +
+  geom_smooth(col = color_set6[1], method = "loess", se = FALSE) +
+  geom_hline(yintercept = 0, col = "darkgrey", linetype = 2) +
+  labs(title = "Plot of Martingale residuals on log(study enrollment)",
+       subtitle = "Clinical trial study data", 
+       x = "log[Enrollment (# participants)]", y = "Martingale residuals") +
+  scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE))
+```
+
+# Considering interactions
+```{r}
+# Checking for most common interactions that come to mind,
+# likely multiple _Cond variables
+library(dplyr)
+x <- studyData %>% select(c(autoimmuneCond:otherCond)) %>% mutate(condSums = rowSums(.))
+table(x$condSums)
+
+x2 <- x %>% filter(condSums > 1) %>% lapply(as.numeric) %>% data.frame() %>% colMeans()
+x2[order(x2, decreasing = TRUE)]
+
+# Primary candidate is 'txDynamicsCond' (64.9% of multiple-condition cases include this) AND:
+# healthyCond (20.3%), cancerCond (18.7%), circulatoryCond (13.7%), respiratoryCond (12.9%), 
+# immuneSysCond (12.4%), infectiousDiseaseCond(10.6%), diabetesCond (10.5%), digestiveCond (9.3%)
+
+studyData <- studyData %>% mutate(txDynHealthyCond = txDynamicsCond * healthyCond,
+                     txDynCancerCond = txDynamicsCond * cancerCond,
+                     txDynCirculatoryCond = txDynamicsCond * circulatoryCond,
+                     txDynRespiratoryCond = txDynamicsCond * respiratoryCond, 
+                     txDynImmuneSysCond = txDynamicsCond * respiratoryCond, 
+                     txDynInfctsDisCond = txDynamicsCond * infectiousDiseaseCond,
+                     txDynDiabetesCond = txDynamicsCond * diabetesCond,
+                     txDynDigestiveCond = txDynamicsCond * digestiveCond)
+
+# Testing the addition of these interaction vars and impact on survival / cumulative hazard curves
+library(flexsurv)
+# txDynHealthyCond: stat. sig. (95% CI doesn't include 0), no real surv/haz curve impact [5.68% of studyData has this]
+# txDynCancerCond: stat. sig., no real surv/haz curve impact [1.83% of studyData has this]
+# txDynCirculatoryCond: not stat. sig. (95% CI includes 0)
+# txDynRespiratoryCond: stat. sig., no real surv/haz curve impact [1.86% of studyData has this]
+# txDynImmuneSysCond: not stat. sig.
+# txDynInfctsDisCond: not stat. sig.
+# txDynDiabetesCond: stat. sig., no real surv/haz curve impact [2.04% of studyData has this]
+# txDynDigestiveCond: stat. sig., no real surv/haz curve impact [0.9% of studyData has this]
+interactMod <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, 
+data = studyData, dist = "weibull", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 74)))
+
+interactMod
+
+# Checking non-Weibull dist alternatives
+# Both log-normal and log-logistic: survival curve fit marginally worse than Weibull,
+# hazard curve drastically worse (essentially a straight line, no following upward curvature)
+interactModLogNorm <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, 
+data = studyData, dist = "lnorm", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 74)))
+
+interactModLogLogist <- flexsurvreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, 
+data = studyData, dist = "llogis", control = list(reltol = 1e-30, maxit = 5000, ndeps = rep(1e-10, 74)))
+
+deciles <- c(1:10)/10
+
+plot(interactMod, type = "survival", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M survival curves",
+     xlab = "Time (days)", ylab = "Survival probability", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", yaxt = "n")
+axis(side = 1, at = seq(0, 3650, by = 365))
+axis(side = 2, at=pretty(deciles), lab=paste0(pretty(deciles) * 100, "%"), las = 1)
+legend(1500, 0.7, c("Nonparametric K-M curve", "Parametric Weibull AFT model curve"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+
+plot(interactMod, type = "cumhaz", conf.int = FALSE, ci = FALSE,
+     main = "Comparison of Weibull AFT Model and K-M cumulative hazard",
+     xlab = "Time (days)", ylab = "Cumulative hazard", 
+     lwd = 2, lty = 2, col = "#13B5EA", lwd.obs = 2, xaxt = "n", las = 2)
+axis(side = 1, at = seq(0, 3650, by = 365))
+legend(0, 10, c("Nonparametric K-M cumulative hazard", "Parametric Weibull AFT cumulative hazard"), 
+       lwd = c(2, 2), lty = c(1, 2), col = c("black", "#13B5EA"))
+```
+
+# Final model
+```{r}
+library(survival)
+
+weibAFT_AICFinal <- survreg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, data = studyData, dist = "weibull")
+```
+
+# Outlier check - ldcase residuals
+```{r}
+# Identifying influential observations based on 'ldcase'
+# 'Value' section in R documentation for residuals.survreg describes 'ldcase' as:
+# "...likelihood displacement residuals for perturbation of a case weight"
+ldcResid <- residuals(weibAFT_AICFinal, type = "ldcase")
+
+# Showing the top 5 observations based on 'ldcase' residuals
+library(dplyr)
+library(knitr)
+kable(head(studyData %>%
+  mutate(obsNum = c(1:nrow(studyData)), ldCaseResid = round(ldcResid, 4)) %>% 
+  arrange(desc(ldCaseResid)) %>% 
+  select(c(obsNum, studyLengthDays, studyEnded, healthyCond, fundedBys, interventionMod, ageGroup, cancerCond, Phases, inOECD, primaryPurpose, painCond, Gender, txDynamicsCond, neuralCond, autoimmuneCond, psychCond, logEnrollment, cardiacCond, biologicalInt, fundedByTop15Pharma, procedureInt, circulatoryCond, otherCond, allocation, maskingPartcpt, behavioralInt, deviceInt, infectiousDiseaseCond, maskingNone, digestiveCond, immuneSysCond, maskingCarePrvdr, comboProdInt, opticalCond, respiratoryCond, diabetesCond, geneticInt, ldCaseResid)), n = 10))
+
+# Knit the file in a separate HTML RMarkdown to review output (see MAT8446_Sandbox.rmd):
+# Top 10 ldCaseResid values are 1.6774, 1.1203, 0.9950, 0.9433, 0.8555, 0.7671, 0.5905, 0.5228, 0.5163, 0.4692
+# Consider discussing top 6
+```
+
+## Frailty Model attempt
+```{r}
+# Using same model as the Weibull AFT BUT clustering on Phase
+library(frailtypack)
+
+# Cox PH fit to get initial parameter estimates
+coxPHFit <- coxph(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, data = studyData, ties = "breslow")$coef
+
+# Log-normal Frailty model
+# Model failed - "Problem in the loglikelihood computation. The program stopped abnormally. Please verify your dataset."
+frailtyLogNorm <- frailtyPenal(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond + cluster(Phases), data = studyData, n.knots = 4, kappa = 1e8, RandDist = "LogN", init.B = coxPHFit)
+
+# Gamma Frailty model
+frailtyGam <- frailtyPenal(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond + cluster(Phases), data = studyData, n.knots = 20, kappa = 1e6, RandDist = "Gamma", init.B = coxPHFit)
+```
+## Additive Hazards Model Attempt
+```{r}
+aFit <- aareg(Surv(studyLengthDays, studyEnded) ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, data = studyData)
+
+plot(aFit)
+```
+
+
+## Best subset selection (AICc criterion) of the Weibull parametric model [not able to run]
+```{r, eval = FALSE}
+# NOTE: The below process did not complete after 10+ hours runtime, so not used for the project analysis
+# First attempt used the full sample (n=40,639)
+# Also failed to complete when using a randomly sampled subset of 5,000 observations - likely due to # of covariates
+
+# dredge function can take a max of 30 covariates, so using the BIC-selected model above as a starting point
+
+# Attempt using random sampling from the full dataset
+set.seed(1842)
+studyDatSub1_5k <- studyData[sample(nrow(studyData), size = 5000),]
+
+library(MuMIn)
+weibBestMod <- dredge(survreg(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + healthyCond + infectiousDiseaseCond + psychCond + neuralCond + painCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + deviceInt + procedureInt + otherInt + primaryPurpose + allocation + interventionMod + maskingPartcpt, 
+data = studyDatSub1_5k, dist = "weibull", na.action = "na.fail"), rank = "AICc")
+
+weibBestMod[1,]
+```
+
+--------------------------------------------------------------------------------
+# **COX PROPORTIONAL HAZARDS WORK BELOW**
+
+# Cox Proportional Hazards models - AIC and BIC selection (stepwise selection)
+**Note: LOTS of variable cross-matrices deemed to be singular in the selection process**
+```{r, eval = FALSE, message = FALSE, warning = FALSE}
+coxPHFull <- coxph(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + diabetesCond + digestiveCond + healthyCond + infectiousDiseaseCond + immuneSysCond + metabolicCond + psychCond + neuralCond + opticalCond + painCond + respiratoryCond + tobaccoCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + comboProdInt + deviceInt + diagnosticTestInt + dietSupplmtInt + drugInt + geneticInt + procedureInt + radiationInt + otherInt + primaryPurpose + allocation + interventionMod + maskingCarePrvdr + maskingInvstgtr + maskingOutcmAssessr + maskingPartcpt + maskingNone + maskingUnknown, data = studyData, ties = "breslow")
+
+coxPHFull0 <- update(coxPHFull, . ~ . -Phases, data = phase0)
+coxPHFull1 <- update(coxPHFull, . ~ . -Phases, data = phase1)
+coxPHFull2 <- update(coxPHFull, . ~ . -Phases, data = phase2)
+coxPHFull3 <- update(coxPHFull, . ~ . -Phases, data = phase3)
+coxPHFull4 <- update(coxPHFull, . ~ . -Phases, data = phase4)
+
+library(MASS)
+emptyMod0 <- coxph(Surv(studyLengthDays, studyEnded) ~ 1, data = phase0, ties = "breslow")
+coxPHStepAICPhase0 <- round(summary(stepAIC(emptyMod0, scope = formula(coxPHFull0), direction = "both", 
+                                    trace = FALSE, k = 2))$coefficients, 4)
+coxPHStepBICPhase0 <- round(summary(stepAIC(emptyMod0, scope = formula(coxPHFull0), direction = "both", 
+                                    trace = FALSE, k = log(nrow(phase0))))$coefficients, 4)
+emptyMod1<- coxph(Surv(studyLengthDays, studyEnded) ~ 1, data = phase1, ties = "breslow")
+coxPHStepAICPhase1 <- round(summary(stepAIC(emptyMod1, scope = formula(coxPHFull1), direction = "both", 
+                                    trace = FALSE, k = 2))$coefficients, 4)
+coxPHStepBICPhase1 <- round(summary(stepAIC(emptyMod1, scope = formula(coxPHFull1), direction = "both", 
+                                    trace = FALSE, k = log(nrow(phase1))))$coefficients, 4)
+emptyMod2<- coxph(Surv(studyLengthDays, studyEnded) ~ 1, data = phase2, ties = "breslow")
+coxPHStepAICPhase2 <- round(summary(stepAIC(emptyMod2, scope = formula(coxPHFull2), direction = "both", 
+                                    trace = FALSE, k = 2))$coefficients, 4)
+coxPHStepBICPhase2 <- round(summary(stepAIC(emptyMod2, scope = formula(coxPHFull2), direction = "both", 
+                                    trace = FALSE, k = log(nrow(phase2))))$coefficients, 4)
+emptyMod3<- coxph(Surv(studyLengthDays, studyEnded) ~ 1, data = phase3, ties = "breslow")
+coxPHStepAICPhase3 <- round(summary(stepAIC(emptyMod3, scope = formula(coxPHFull3), direction = "both", 
+                                    trace = FALSE, k = 2))$coefficients, 4)
+coxPHStepBICPhase3 <- round(summary(stepAIC(emptyMod3, scope = formula(coxPHFull3), direction = "both", 
+                                    trace = FALSE, k = log(nrow(phase3))))$coefficients, 4)
+emptyMod4<- coxph(Surv(studyLengthDays, studyEnded) ~ 1, data = phase4, ties = "breslow")
+coxPHStepAICPhase4 <- round(summary(stepAIC(emptyMod4, scope = formula(coxPHFull4), direction = "both", 
+                                    trace = FALSE, k = 2))$coefficients, 4)
+coxPHStepBICPhase4 <- round(summary(stepAIC(emptyMod4, scope = formula(coxPHFull4), direction = "both", 
+                                    trace = FALSE, k = log(nrow(phase4))))$coefficients, 4)
+```
+
+### Stat tests to examine whether the...
+# Cox Proportional Hazards model - BIC-selected covariates
+```{r}
+#library(survival)
+coxPHFit <- coxph(Surv(studyLengthDays, studyEnded) ~ Gender + Phases + Enrollment + inOECD + ageGroup + fundedBys + fundedByTop15Pharma + autoimmuneCond + cancerCond + cardiacCond + circulatoryCond + healthyCond + infectiousDiseaseCond + psychCond + neuralCond + painCond + txDynamicsCond + otherCond + behavioralInt + biologicalInt + deviceInt + procedureInt + otherInt + primaryPurpose + allocation + interventionMod + maskingPartcpt + maskingNone, 
+                  data = studyData, ties = "breslow")
+
+#Extracting the exp(coef) values from the coxPHFit model
+coxPropHazards <- summary(coxPHFit)$coefficients[,2]
+
+# Comparison to Weibull AFT model proportional hazard estimates
+# Excluding the intercept term
+# weibAFT_BIC does not include the covariates 'otherInt' and 'maskingNone' - need to adjust coefficient accordingly
+# otherInt (would be coeff #46), maskingNone (would be last coeff [#64])
+
+numCoeff <- length(coefficients(weibAFT_BIC))
+weibAFT_BIC_coeff <- c(coefficients(weibAFT_BIC)[1:45], NA, coefficients(weibAFT_BIC)[46:numCoeff], NA)
+
+weibAFTPropHazards <- (exp(-weibAFT_BIC_coeff / summary(weibAFT_BIC)$scale))[-1]
+
+# Comparison table between Cox Proportional Hazards and Weibull AFT hazard ratio estimates
+#library(knitr)
+kable(round(cbind(coxPropHazards, weibAFTPropHazards), 4), 
+      col.names = c("Cox PH \n Hazard Ratio Est.", "Weibull AFT \n Hazard Ratio Est."))
+```
+
+## Checking Cox PH model conditions - proportional hazard assumption
+### Stratified by study phase
+```{r, eval = FALSE}
+# AIC-selected models
+coxPHPhase0AIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + interventionMod + inOECD + primaryPurpose + ageGroup + Gender + circulatoryCond + cardiacCond + otherInt + biologicalInt + psychCond + cancerCond + txDynamicsCond + digestiveCond + tobaccoCond + radiationInt + behavioralInt, data = phase0, ties = "breslow")
+
+coxPHPhase1AIC <- coxph(Surv(studyLengthDays, studyEnded) ~ ageGroup + fundedBys + interventionMod + cancerCond + healthyCond + maskingPartcpt + Enrollment + drugInt + inOECD + Gender + primaryPurpose + allocation + txDynamicsCond + maskingNone + biologicalInt + psychCond + autoimmuneCond + otherCond + deviceInt + opticalCond + metabolicCond + digestiveCond + circulatoryCond + neuralCond + cardiacCond + maskingOutcmAssessr + procedureInt + respiratoryCond + diagnosticTestInt + painCond, data = phase1, ties = "breslow")
+
+coxPHPhase2AIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + cancerCond + interventionMod + inOECD + ageGroup + primaryPurpose + painCond + neuralCond + fundedByTop15Pharma + maskingNone + behavioralInt + biologicalInt + allocation + autoimmuneCond + circulatoryCond + infectiousDiseaseCond + Gender + maskingCarePrvdr + otherInt + txDynamicsCond + Enrollment + diabetesCond + procedureInt + geneticInt + comboProdInt + radiationInt + cardiacCond + respiratoryCond, data = phase2, ties = "breslow")
+
+coxPHPhase3AIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + cancerCond + inOECD + interventionMod + painCond + healthyCond + Enrollment + primaryPurpose + neuralCond + maskingNone + infectiousDiseaseCond + fundedByTop15Pharma + autoimmuneCond + immuneSysCond + maskingOutcmAssessr + procedureInt + cardiacCond + psychCond + drugInt + ageGroup + circulatoryCond + otherCond + behavioralInt + biologicalInt + maskingCarePrvdr + digestiveCond + opticalCond + radiationInt + allocation, data = phase3, ties = "breslow")
+
+coxPHPhase4AIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + ageGroup + interventionMod + primaryPurpose + inOECD + cancerCond + painCond + healthyCond + maskingNone + psychCond + infectiousDiseaseCond + cardiacCond + procedureInt + autoimmuneCond + Enrollment + maskingOutcmAssessr + txDynamicsCond + maskingPartcpt + Gender + neuralCond + dietSupplmtInt + biologicalInt + circulatoryCond + opticalCond + fundedByTop15Pharma + deviceInt + diagnosticTestInt + behavioralInt + otherCond + diabetesCond, data = phase4, ties = "breslow")
+
+deciles <- c(1:10)/10
+
+plot(survfit(coxPHPhase0AIC), conf.int = FALSE, main = "Plotting Cox PH survival curves by clinical trial phase", 
+     xlab = "Study length (days)", ylab = "Survival probability", sub = "AIC selection", 
+     lwd = 1.5, xaxt = "n", yaxt = "n", col = color_set6[1])
+lines(survfit(coxPHPhase1AIC), conf.int = FALSE, lwd = 1.5, col = color_set6[2])
+lines(survfit(coxPHPhase2AIC), conf.int = FALSE, lwd = 1.5, col = color_set6[4])
+lines(survfit(coxPHPhase3AIC), conf.int = FALSE, lwd = 1.5, col = color_set6[5])
+lines(survfit(coxPHPhase4AIC), conf.int = FALSE, lwd = 1.5, col = color_set6[6])
+axis(side = 1, at = seq(0, 3650, by = 365))
+axis(2, at=pretty(deciles), lab=paste0(pretty(deciles) * 100, "%"), las = 1)
+legend(1500, 0.8, c("0 / Early 1", "1", "2", "3", "4"), 
+       lwd = rep(1.5, 5), col = color_set6[-3])
+
+rm(coxPHPhase0AIC, coxPHPhase1AIC, coxPHPhase2AIC, coxPHPhase3AIC, coxPHPhase4AIC, deciles)
+```
+Survival curves cross - ixnay on these (proportional hazard assumption violated).
+
+```{r, eval = FALSE}
+# BIC-selected models
+coxPHPhase0BIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + inOECD + healthyCond + otherInt + txDynamicsCond + cardiacCond + cancerCond + circulatoryCond, data = phase0, ties = "breslow")
+
+coxPHPhase1BIC <- coxph(Surv(studyLengthDays, studyEnded) ~ ageGroup + fundedBys + interventionMod + cancerCond + healthyCond + Enrollment + drugInt + inOECD + allocation + Gender + maskingNone + otherCond + autoimmuneCond + psychCond + biologicalInt + txDynamicsCond + opticalCond, data = phase1, ties = "breslow")
+
+coxPHPhase2BIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + cancerCond + interventionMod + inOECD + painCond + ageGroup + neuralCond + fundedByTop15Pharma + maskingNone + primaryPurpose + behavioralInt + biologicalInt, data = phase2, ties = "breslow")
+
+coxPHPhase3BIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + cancerCond + inOECD + painCond + healthyCond + interventionMod + Enrollment + neuralCond + infectiousDiseaseCond + maskingNone + autoimmuneCond + immuneSysCond + fundedByTop15Pharma + maskingCarePrvdr + procedureInt + psychCond + cardiacCond + drugInt, data = phase3, ties = "breslow")
+
+coxPHPhase4BIC <- coxph(Surv(studyLengthDays, studyEnded) ~ fundedBys + ageGroup + interventionMod + inOECD + healthyCond + cancerCond + painCond + maskingNone + psychCond + primaryPurpose + infectiousDiseaseCond + cardiacCond + procedureInt + autoimmuneCond + Enrollment + maskingOutcmAssessr + txDynamicsCond + maskingPartcpt, data = phase4, ties = "breslow")
+
+deciles <- c(1:10)/10
+
+plot(survfit(coxPHPhase0BIC), conf.int = FALSE, main = "Plotting Cox PH survival curves by clinical trial phase", 
+     xlab = "Study length (days)", ylab = "Survival probability", sub = "BIC selection", 
+     lwd = 1.5, xaxt = "n", yaxt = "n", col = color_set6[1])
+lines(survfit(coxPHPhase1BIC), conf.int = FALSE, lwd = 1.5, col = color_set6[2])
+lines(survfit(coxPHPhase2BIC), conf.int = FALSE, lwd = 1.5, col = color_set6[4])
+lines(survfit(coxPHPhase3BIC), conf.int = FALSE, lwd = 1.5, col = color_set6[5])
+lines(survfit(coxPHPhase4BIC), conf.int = FALSE, lwd = 1.5, col = color_set6[6])
+axis(side = 1, at = seq(0, 3650, by = 365))
+axis(2, at=pretty(deciles), lab=paste0(pretty(deciles) * 100, "%"), las = 1)
+legend(1500, 0.8, c("0 / Early 1", "1", "2", "3", "4"), 
+       lwd = rep(1.5, 5), col = color_set6[-3])
+```
+
+
+### Interactions with predictors and time
+```{r}
+cox.zph(coxPHPhase0BIC, transform = "identity")
+cox.zph(coxPHPhase1BIC, transform = "identity")
+cox.zph(coxPHPhase2BIC, transform = "identity")
+cox.zph(coxPHPhase3BIC, transform = "identity")
+cox.zph(coxPHPhase4BIC, transform = "identity")
+
+rm(coxPHPhase0BIC, coxPHPhase1BIC, coxPHPhase2BIC, coxPHPhase3BIC, coxPHPhase4BIC, deciles)
+```
+
+As might be expected with such large models, several individual covariates have very low *p*-values when tested on interactions with time. This suggests strong statistical evidence that hazards are non-constant for these covariates over time. Furthermore, the 'GLOBAL' *p*-value is extremely low for all but the Phase 0 model (which still has a very low *p*-value), still further statistical evidence the proportional hazards condition fails across time.
+
+# Idle speculation - OLS regression of studyLengthDays on final model covariates
+```{r}
+olsMod <- lm(studyLengthDays ~ healthyCond + fundedBys + interventionMod + ageGroup + cancerCond + Phases + inOECD + primaryPurpose + painCond + Gender + txDynamicsCond + neuralCond + autoimmuneCond + psychCond + logEnrollment + cardiacCond + biologicalInt + fundedByTop15Pharma + procedureInt + circulatoryCond + otherCond + allocation + maskingPartcpt + behavioralInt + deviceInt + infectiousDiseaseCond + maskingNone + digestiveCond + immuneSysCond + maskingCarePrvdr + comboProdInt + opticalCond + respiratoryCond + diabetesCond + geneticInt + txDynHealthyCond, data = studyData)
+
+library(car)
+vif(olsMod)
+
+library(ggplot2)
+library(ggfortify)
+
+autoplot(olsMod, which = c(1,2)) +
+  labs(caption = "olsMod") 
+
+library(MASS)
+avPlots(olsMod, ask = FALSE, col = color_set6[2], pch = 16, col.lines = "blue", lwd = 1.5,
+grid = FALSE)
+
+# Overall Fitted vs. Residuals Plots
+library(dplyr)
+#library(MASS)
+studyData <- studyData %>%
+  mutate(fittedMod = predict(olsMod, data = studyData),
+         ordResid = olsMod$residuals,
+         studResid = studres(olsMod))
+
+plotDefaults <- list(geom_point(col = color_set6[2]),
+geom_hline(yintercept = 0, linetype = 2, col = "darkgrey"),
+theme(axis.text = element_text(color="#000000", size = 12)),
+theme(plot.margin = unit(rep(0.5,4), units = "cm")))
+
+residPlotOrd <- ggplot(studyData, aes(x = fittedMod, y = ordResid)) +
+plotDefaults +
+labs(title = "Ordinary Residuals vs. \n Fitted values", x = "Fitted values",
+y = "Ordinary Residuals")
+
+residPlotStud <- ggplot(studyData, aes(x = fittedMod, y = studResid)) +
+plotDefaults +
+labs(title = "Studentized Residuals vs. \n Fitted values", x = "Fitted values",
+y = "Studentized Residuals")
+
+library(cowplot)
+plot_grid(residPlotOrd, residPlotStud, ncol = 2, align = "h")
+```
+
+```{r}
+#Convert logical to numeric to allow mean summaries to reflect %s
+cols <- sapply(studyData, is.logical)
+studyData[,cols] <- lapply(studyData[,cols], as.numeric)
+```
